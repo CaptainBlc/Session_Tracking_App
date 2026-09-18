@@ -291,8 +291,9 @@ class DataPipeline:
                     INSERT INTO seans_takvimi
                     (tarih, saat, danisan_adi, terapist, oda, durum, notlar,
                      hizmet_bedeli, odeme_sekli, seans_alindi, ucret_alindi,
-                     olusturma_tarihi, olusturan_kullanici_id, record_id)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     olusturma_tarihi, olusturan_kullanici_id, record_id,
+                     alinan_ucret, kalan_borc)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         tarih,
@@ -309,38 +310,22 @@ class DataPipeline:
                         self._now(),
                         self.kullanici_id,
                         None,
+                        au,
+                        kalan,
                     ),
                 )
                 seans_id = int(self.cur.lastrowid or 0) or None
 
-            record_id = None
-            if self.table_exists("records"):
-                self.cur.execute(
-                    """
-                    INSERT INTO records
-                    (tarih, saat, danisan_adi, terapist, hizmet_bedeli, alinan_ucret, kalan_borc, seans_alindi, notlar, olusturma_tarihi, seans_id)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?)
-                    """,
-                    (tarih, saat, danisan_clean, terapist, hb, au, kalan, 0, notlar, self._now(), seans_id),
-                )
-                record_id = int(self.cur.lastrowid or 0) or None
-
-            if seans_id and record_id and self.table_exists("seans_takvimi"):
-                try:
-                    self.cur.execute("UPDATE seans_takvimi SET record_id=? WHERE id=?", (record_id, seans_id))
-                except Exception:
-                    pass
-
             # ödeme geldiyse odeme_hareketleri + kasa
-            if au > 0 and record_id:
+            if au > 0 and seans_id:
                 if self.table_exists("odeme_hareketleri"):
                     self.cur.execute(
                         """
                         INSERT INTO odeme_hareketleri
-                        (record_id, tutar, tarih, odeme_sekli, aciklama, olusturma_tarihi, olusturan_kullanici_id)
+                        (seans_id, tutar, tarih, odeme_sekli, aciklama, olusturma_tarihi, olusturan_kullanici_id)
                         VALUES (?,?,?,?,?,?,?)
                         """,
-                        (record_id, au, tarih, "", "Seans Tahsilatı", self._now(), self.kullanici_id),
+                        (seans_id, au, tarih, "", "Seans Tahsilatı", self._now(), self.kullanici_id),
                     )
                 self._add_kasa(
                     tarih,
@@ -349,7 +334,7 @@ class DataPipeline:
                     au,
                     "",
                     "Seans",
-                    record_id,
+                    None,
                     seans_id,
                 )
 
@@ -371,14 +356,13 @@ class DataPipeline:
                     log_exception("pipeline.personel_ucret_insert", e)
 
             self._audit("seans_kayit", "seans_takvimi", seans_id, {
-                "record_id": record_id,
                 "danisan_adi": danisan_clean,
                 "terapist": terapist,
                 "hizmet_bedeli": hb,
                 "alinan_ucret": au,
             })
             self.conn.commit()
-            self._trigger_event("seans_created", {"seans_id": seans_id, "record_id": record_id})
+            self._trigger_event("seans_created", {"seans_id": seans_id})
             return seans_id
 
         except Exception as e:
@@ -402,7 +386,7 @@ class DataPipeline:
         try:
             self.conn.execute("BEGIN")
             self.cur.execute(
-                "SELECT COALESCE(seans_alindi,0), COALESCE(ucret_alindi,0), COALESCE(hizmet_bedeli,0), COALESCE(record_id,0) FROM seans_takvimi WHERE id=?",
+                "SELECT COALESCE(seans_alindi,0), COALESCE(ucret_alindi,0), COALESCE(hizmet_bedeli,0), COALESCE(alinan_ucret,0) FROM seans_takvimi WHERE id=?",
                 (seans_id,),
             )
             row = self.cur.fetchone()
@@ -410,8 +394,7 @@ class DataPipeline:
                 self.conn.rollback()
                 return False
 
-            sa0, ua0, hb0, rid0 = row
-            rid = int(rid0 or 0) or None
+            sa0, ua0, hb0, au0 = row
 
             if seans_alindi is None:
                 seans_alindi = not bool(int(sa0 or 0))
@@ -422,21 +405,15 @@ class DataPipeline:
             if ucret_tutar is not None:
                 hb = self._safe_float(ucret_tutar)
 
+            au = self._safe_float(au0)
+            kalan = max(0.0, hb - au)
+
             self.cur.execute(
-                "UPDATE seans_takvimi SET seans_alindi=?, ucret_alindi=?, hizmet_bedeli=?, odeme_sekli=? WHERE id=?",
-                (1 if seans_alindi else 0, 1 if ucret_alindi else 0, hb, (odeme_sekli or ""), seans_id),
+                "UPDATE seans_takvimi SET seans_alindi=?, ucret_alindi=?, hizmet_bedeli=?, odeme_sekli=?, kalan_borc=? WHERE id=?",
+                (1 if seans_alindi else 0, 1 if ucret_alindi else 0, hb, (odeme_sekli or ""), kalan, seans_id),
             )
 
-            if rid and self.table_exists("records"):
-                self.cur.execute("SELECT COALESCE(alinan_ucret,0) FROM records WHERE id=?", (rid,))
-                au = self._safe_float((self.cur.fetchone() or [0])[0])
-                kalan = max(0.0, hb - au)
-                self.cur.execute(
-                    "UPDATE records SET hizmet_bedeli=?, kalan_borc=?, seans_alindi=? WHERE id=?",
-                    (hb, kalan, 1 if seans_alindi else 0, rid),
-                )
-
-            self._audit("kayit_sil", "seans_takvimi", seans_id, {"record_id": record_id})
+            self._audit("seans_durum_guncelle", "seans_takvimi", seans_id, {"hizmet_bedeli": hb, "kalan_borc": kalan})
             self.conn.commit()
             return True
         except Exception as e:
@@ -451,22 +428,15 @@ class DataPipeline:
         try:
             self.conn.execute("BEGIN")
 
-            record_id = None
-            if self.table_exists("seans_takvimi"):
-                self.cur.execute("SELECT COALESCE(record_id,0) FROM seans_takvimi WHERE id=?", (seans_id,))
-                record_id = int((self.cur.fetchone() or [0])[0] or 0) or None
-
             if self.table_exists("kasa_hareketleri"):
                 try:
                     self.cur.execute("DELETE FROM kasa_hareketleri WHERE seans_id=?", (seans_id,))
-                    if record_id is not None:
-                        self.cur.execute("DELETE FROM kasa_hareketleri WHERE record_id=?", (record_id,))
                 except Exception:
                     pass
 
-            if record_id is not None and self.table_exists("odeme_hareketleri"):
+            if self.table_exists("odeme_hareketleri"):
                 try:
-                    self.cur.execute("DELETE FROM odeme_hareketleri WHERE record_id=?", (record_id,))
+                    self.cur.execute("DELETE FROM odeme_hareketleri WHERE seans_id=?", (seans_id,))
                 except Exception:
                     pass
 
@@ -475,9 +445,6 @@ class DataPipeline:
                     self.cur.execute("DELETE FROM personel_ucret_takibi WHERE seans_id=?", (seans_id,))
                 except Exception:
                     pass
-
-            if record_id is not None and self.table_exists("records"):
-                self.cur.execute("DELETE FROM records WHERE id=?", (record_id,))
 
             if self.table_exists("seans_takvimi"):
                 self.cur.execute("DELETE FROM seans_takvimi WHERE id=?", (seans_id,))
@@ -493,48 +460,46 @@ class DataPipeline:
             return False
 
     # ---------- API: Ödeme / Borç ----------
-    def odeme_ekle(self, record_id: int, tutar: float, tarih: str, odeme_sekli: str, aciklama: str = "") -> bool:
+    def odeme_ekle(self, seans_id: int, tutar: float, tarih: str, odeme_sekli: str, aciklama: str = "") -> bool:
         self._set_error("")
         tutar = self._safe_float(tutar)
-        if not self._validate_amount(tutar, "Ödeme tutarı", 0.01) or not self.table_exists("records"):
+        if not self._validate_amount(tutar, "Ödeme tutarı", 0.01) or not self.table_exists("seans_takvimi"):
             return False
         try:
             self.conn.execute("BEGIN")
 
             self.cur.execute(
-                "SELECT COALESCE(hizmet_bedeli,0), COALESCE(alinan_ucret,0), COALESCE(seans_id,0), danisan_adi, terapist FROM records WHERE id=?",
-                (record_id,),
+                "SELECT COALESCE(hizmet_bedeli,0), COALESCE(alinan_ucret,0), danisan_adi, terapist FROM seans_takvimi WHERE id=?",
+                (seans_id,),
             )
             row = self.cur.fetchone()
             if not row:
                 self.conn.rollback()
                 return False
 
-            hb, au, seans_id, danisan, terapist = row
+            hb, au, danisan, terapist = row
             hb = self._safe_float(hb)
             au = self._safe_float(au)
-            seans_id = int(seans_id or 0) or None
 
             yeni_au = au + tutar
             kalan = max(0.0, hb - yeni_au)
-            self.cur.execute("UPDATE records SET alinan_ucret=?, kalan_borc=? WHERE id=?", (yeni_au, kalan, record_id))
+            self.cur.execute("UPDATE seans_takvimi SET alinan_ucret=?, kalan_borc=? WHERE id=?", (yeni_au, kalan, seans_id))
 
             if self.table_exists("odeme_hareketleri"):
                 self.cur.execute(
                     """
                     INSERT INTO odeme_hareketleri
-                    (record_id, tutar, tarih, odeme_sekli, aciklama, olusturma_tarihi, olusturan_kullanici_id)
+                    (seans_id, tutar, tarih, odeme_sekli, aciklama, olusturma_tarihi, olusturan_kullanici_id)
                     VALUES (?,?,?,?,?,?,?)
                     """,
-                    (record_id, tutar, tarih, odeme_sekli, aciklama, self._now(), self.kullanici_id),
+                    (seans_id, tutar, tarih, odeme_sekli, aciklama, self._now(), self.kullanici_id),
                 )
 
-            self._add_kasa(tarih, "giren", f"Ödeme: {danisan}/{terapist}", tutar, odeme_sekli, "Tahsilat", record_id, seans_id)
+            self._add_kasa(tarih, "giren", f"Ödeme: {danisan}/{terapist}", tutar, odeme_sekli, "Tahsilat", None, seans_id)
 
-            if seans_id and self.table_exists("seans_takvimi"):
-                self.cur.execute("UPDATE seans_takvimi SET ucret_alindi=1 WHERE id=?", (seans_id,))
+            self.cur.execute("UPDATE seans_takvimi SET ucret_alindi=1 WHERE id=?", (seans_id,))
 
-            self._audit("odeme_ekle", "records", record_id, {"tutar": tutar, "odeme_sekli": odeme_sekli, "seans_id": seans_id})
+            self._audit("odeme_ekle", "seans_takvimi", seans_id, {"tutar": tutar, "odeme_sekli": odeme_sekli})
             self.conn.commit()
             return True
         except Exception as e:
@@ -564,14 +529,23 @@ class DataPipeline:
             self._ensure_danisan_exists(danisan_upper)
 
             rid = None
-            if self.table_exists("records"):
+            if self.table_exists("seans_takvimi"):
+                # durum='devir_borc': gercek bir seans degil, takvim/oda
+                # cakisma kontrollerini ve calisma listelerini etkilememesi icin
+                # ayirt edici bir isaret (bkz. eski_borc_kayitlari_getir/eski_borc_sil).
                 self.cur.execute(
                     """
-                    INSERT INTO records
-                    (tarih, saat, danisan_adi, terapist, hizmet_bedeli, alinan_ucret, kalan_borc, seans_alindi, notlar, olusturma_tarihi, seans_id)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                    INSERT INTO seans_takvimi
+                    (tarih, saat, danisan_adi, terapist, oda, durum, notlar,
+                     hizmet_bedeli, odeme_sekli, seans_alindi, ucret_alindi,
+                     olusturma_tarihi, olusturan_kullanici_id, record_id,
+                     alinan_ucret, kalan_borc)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
-                    (tarih, "", danisan_upper, "", tutar, 0, tutar, 1, aciklama, self._now(), None),
+                    (tarih, "", danisan_upper, "", "", "devir_borc", aciklama,
+                     tutar, "", 1, 0,
+                     self._now(), self.kullanici_id, None,
+                     0, tutar),
                 )
                 rid = int(self.cur.lastrowid or 0) or None
 
@@ -588,7 +562,7 @@ class DataPipeline:
     def eski_borc_kayitlari_getir(self, danisan_adi: str | None = None) -> list[dict]:
         """DB içindeki borçlu kayıtları listeler (eski/yeni format uyumlu)."""
         out: list[dict] = []
-        if not self.table_exists("records"):
+        if not self.table_exists("seans_takvimi"):
             return out
         try:
             hedef = self._normalize_name((danisan_adi or "").strip()) if danisan_adi else ""
@@ -596,12 +570,12 @@ class DataPipeline:
                 """
                 SELECT r.id, COALESCE(r.tarih,''), COALESCE(r.danisan_adi,''), COALESCE(r.terapist,''),
                        COALESCE(r.hizmet_bedeli,0), COALESCE(r.alinan_ucret,0), COALESCE(r.kalan_borc,0),
-                       COALESCE(r.notlar,''), COALESCE(r.seans_id,0)
-                FROM records r
+                       COALESCE(r.notlar,''), COALESCE(r.durum,'')
+                FROM seans_takvimi r
                 ORDER BY r.tarih DESC, r.id DESC
                 """
             )
-            for rid, tarih, danisan, terapist, hizmet, alinan, kalan, notlar, seans_id in self.cur.fetchall() or []:
+            for rid, tarih, danisan, terapist, hizmet, alinan, kalan, notlar, durum in self.cur.fetchall() or []:
                 dan_n = self._normalize_name(str(danisan or ""))
                 if hedef and dan_n != hedef:
                     continue
@@ -614,10 +588,9 @@ class DataPipeline:
                     continue
 
                 notlar_n = self._normalize_name(str(notlar or ""))
-                seans_bagli = int(seans_id or 0) != 0
-                if not seans_bagli and self.table_exists("seans_takvimi"):
-                    self.cur.execute("SELECT 1 FROM seans_takvimi WHERE record_id=? LIMIT 1", (int(rid),))
-                    seans_bagli = self.cur.fetchone() is not None
+                # 'devir_borc' durumu = gercek bir seansa bagli olmayan, elle
+                # girilmis acilis bakiyesi (bkz. eski_borc_ekle).
+                seans_bagli = (durum or "") != "devir_borc"
 
                 tur = "devir_borc" if ("DEVIR" in notlar_n and "BORC" in notlar_n) else "kayit_borcu"
                 silinebilir = (not seans_bagli) and (alinan_f <= 0)
@@ -630,7 +603,7 @@ class DataPipeline:
                     "alinan_ucret": alinan_f,
                     "kalan_borc": kalan_f,
                     "notlar": str(notlar or ""),
-                    "seans_id": int(seans_id or 0),
+                    "seans_id": int(rid),
                     "seans_bagli": seans_bagli,
                     "silinebilir": silinebilir,
                     "tur": tur,
@@ -639,12 +612,12 @@ class DataPipeline:
             log_exception("pipeline.eski_borc_kayitlari_getir", e)
         return out
 
-    def eski_borc_sil(self, record_id: int) -> bool:
-        """Standalone borç kaydını siler (seans bağlantısı yok + ödeme yok)."""
-        if not self.table_exists("records"):
+    def eski_borc_sil(self, seans_id: int) -> bool:
+        """Standalone borç kaydını siler (gerçek seansa bağlı değil + ödeme yok)."""
+        if not self.table_exists("seans_takvimi"):
             return False
         try:
-            rid = int(record_id)
+            rid = int(seans_id)
         except Exception:
             return False
 
@@ -652,8 +625,8 @@ class DataPipeline:
             self.conn.execute("BEGIN")
             self.cur.execute(
                 """
-                SELECT COALESCE(seans_id,0), COALESCE(alinan_ucret,0), COALESCE(notlar,''), COALESCE(danisan_adi,'')
-                FROM records WHERE id=?
+                SELECT COALESCE(alinan_ucret,0), COALESCE(notlar,''), COALESCE(danisan_adi,''), COALESCE(durum,'')
+                FROM seans_takvimi WHERE id=?
                 """,
                 (rid,),
             )
@@ -662,18 +635,11 @@ class DataPipeline:
                 self.conn.rollback()
                 return False
 
-            seans_id, alinan, notlar, danisan = row
-            if int(seans_id or 0) != 0:
+            alinan, notlar, danisan, durum = row
+            if (durum or "") != "devir_borc":
                 self._set_error("Bu kayıt bir seansa bağlı olduğu için buradan silinemez.")
                 self.conn.rollback()
                 return False
-
-            if self.table_exists("seans_takvimi"):
-                self.cur.execute("SELECT 1 FROM seans_takvimi WHERE record_id=? LIMIT 1", (rid,))
-                if self.cur.fetchone():
-                    self._set_error("Kayıt takvimle bağlantılı olduğu için buradan silinemez.")
-                    self.conn.rollback()
-                    return False
 
             if self._safe_float(alinan) > 0:
                 self._set_error("Kayıtta tahsilat bulunduğu için silinemez.")
@@ -681,15 +647,15 @@ class DataPipeline:
                 return False
 
             if self.table_exists("odeme_hareketleri"):
-                self.cur.execute("DELETE FROM odeme_hareketleri WHERE record_id=?", (rid,))
+                self.cur.execute("DELETE FROM odeme_hareketleri WHERE seans_id=?", (rid,))
             if self.table_exists("kasa_hareketleri"):
-                self.cur.execute("DELETE FROM kasa_hareketleri WHERE record_id=?", (rid,))
-            self.cur.execute("DELETE FROM records WHERE id=?", (rid,))
+                self.cur.execute("DELETE FROM kasa_hareketleri WHERE seans_id=?", (rid,))
+            self.cur.execute("DELETE FROM seans_takvimi WHERE id=?", (rid,))
 
             if self.table_exists("sistem_gunlugu"):
                 self.cur.execute(
                     "INSERT INTO sistem_gunlugu (tarih, olay, aciklama, olusturma_tarihi) VALUES (?,?,?,?)",
-                    (self._today(), "DEVIR_BORC_SIL", f"record_id={rid} danisan={danisan}", self._now()),
+                    (self._today(), "DEVIR_BORC_SIL", f"seans_id={rid} danisan={danisan}", self._now()),
                 )
 
             self.conn.commit()
@@ -737,7 +703,7 @@ class DataPipeline:
             self.conn.execute("BEGIN")
 
             self.cur.execute(
-                "SELECT COALESCE(tip,''), COALESCE(tutar,0), COALESCE(record_id,0), COALESCE(seans_id,0), COALESCE(aciklama,''), COALESCE(gider_kategorisi,'') FROM kasa_hareketleri WHERE id=?",
+                "SELECT COALESCE(tip,''), COALESCE(tutar,0), COALESCE(seans_id,0), COALESCE(aciklama,''), COALESCE(gider_kategorisi,'') FROM kasa_hareketleri WHERE id=?",
                 (hareket_id,),
             )
             row = self.cur.fetchone()
@@ -745,41 +711,34 @@ class DataPipeline:
                 self.conn.rollback()
                 return False
 
-            tip, tutar_raw, record_id_raw, seans_id_raw, aciklama, gider_kategorisi = row
+            tip, tutar_raw, seans_id_raw, aciklama, gider_kategorisi = row
             tutar = self._safe_float(tutar_raw)
-            record_id = int(record_id_raw or 0) or None
             seans_id = int(seans_id_raw or 0) or None
 
             self.cur.execute("DELETE FROM kasa_hareketleri WHERE id=?", (hareket_id,))
 
-            # Tahsilat silinirse records/seans tarafını geri senkronla
-            if tip == "giren" and record_id and self.table_exists("records"):
+            # Tahsilat silinirse seans_takvimi tarafını geri senkronla
+            if tip == "giren" and seans_id and self.table_exists("seans_takvimi"):
                 self.cur.execute(
-                    "SELECT COALESCE(hizmet_bedeli,0), COALESCE(alinan_ucret,0), COALESCE(seans_id,0) FROM records WHERE id=?",
-                    (record_id,),
+                    "SELECT COALESCE(hizmet_bedeli,0), COALESCE(alinan_ucret,0) FROM seans_takvimi WHERE id=?",
+                    (seans_id,),
                 )
                 rr = self.cur.fetchone()
                 if rr:
                     hizmet = self._safe_float(rr[0])
                     alinan_mevcut = self._safe_float(rr[1])
-                    rid_seans = int(rr[2] or 0) or None
                     yeni_alinan = max(0.0, alinan_mevcut - tutar)
                     yeni_kalan = max(0.0, hizmet - yeni_alinan)
                     self.cur.execute(
-                        "UPDATE records SET alinan_ucret=?, kalan_borc=? WHERE id=?",
-                        (yeni_alinan, yeni_kalan, record_id),
+                        "UPDATE seans_takvimi SET alinan_ucret=?, kalan_borc=?, ucret_alindi=? WHERE id=?",
+                        (yeni_alinan, yeni_kalan, 1 if yeni_kalan <= 0 else 0, seans_id),
                     )
-
-                    if self.table_exists("seans_takvimi"):
-                        sid = seans_id or rid_seans
-                        if sid:
-                            self.cur.execute("UPDATE seans_takvimi SET ucret_alindi=? WHERE id=?", (1 if yeni_kalan <= 0 else 0, sid))
 
                 # Ödeme hareketlerinden bir eşleşeni düş (varsa)
                 if self.table_exists("odeme_hareketleri"):
                     self.cur.execute(
-                        "SELECT id FROM odeme_hareketleri WHERE record_id=? AND ABS(COALESCE(tutar,0)-?) < 0.0001 ORDER BY id DESC LIMIT 1",
-                        (record_id, tutar),
+                        "SELECT id FROM odeme_hareketleri WHERE seans_id=? AND ABS(COALESCE(tutar,0)-?) < 0.0001 ORDER BY id DESC LIMIT 1",
+                        (seans_id, tutar),
                     )
                     od = self.cur.fetchone()
                     if od:
@@ -823,7 +782,7 @@ class DataPipeline:
             if self.table_exists("sistem_gunlugu"):
                 self.cur.execute(
                     "INSERT INTO sistem_gunlugu (tarih, olay, aciklama, olusturma_tarihi) VALUES (?,?,?,?)",
-                    (self._today(), "KASA_SIL", f"Kasa hareketi silindi: id={hareket_id} tip={tip} tutar={tutar} record_id={record_id}", self._now()),
+                    (self._today(), "KASA_SIL", f"Kasa hareketi silindi: id={hareket_id} tip={tip} tutar={tutar} seans_id={seans_id}", self._now()),
                 )
             self.conn.commit()
             return True
@@ -915,9 +874,9 @@ class DataPipeline:
             except Exception as e:
                 log_exception("get_dashboard_data_kasa", e)
 
-        if self.table_exists("records"):
+        if self.table_exists("seans_takvimi"):
             try:
-                self.cur.execute("SELECT COALESCE(SUM(kalan_borc),0) FROM records WHERE COALESCE(kalan_borc,0)>0")
+                self.cur.execute("SELECT COALESCE(SUM(kalan_borc),0) FROM seans_takvimi WHERE COALESCE(kalan_borc,0)>0")
                 toplam = float((self.cur.fetchone() or [0])[0] or 0.0)
                 out["finansal"]["toplam_borc"] = toplam
                 out["finansal"]["beklenen_toplam_alacak"] = toplam
@@ -925,12 +884,12 @@ class DataPipeline:
                 pass
 
 
-        if self.table_exists("records"):
+        if self.table_exists("seans_takvimi"):
             try:
                 self.cur.execute(
                     """
                     SELECT COALESCE(danisan_adi,''), COALESCE(kalan_borc,0)
-                    FROM records
+                    FROM seans_takvimi
                     WHERE COALESCE(kalan_borc,0) > 0
                     """
                 )
@@ -1010,11 +969,11 @@ class DataPipeline:
                     out["hizmet_bedeli"] = out["price"]
                     return out
 
-            if self.table_exists("records"):
+            if self.table_exists("seans_takvimi"):
                 self.cur.execute(
                     """
                     SELECT AVG(COALESCE(hizmet_bedeli,0))
-                    FROM records
+                    FROM seans_takvimi
                     WHERE UPPER(TRIM(danisan_adi))=? AND TRIM(COALESCE(terapist,''))=?
                       AND COALESCE(hizmet_bedeli,0)>0
                     """,
@@ -1040,9 +999,11 @@ class DataPipeline:
 
     def validate_sync(self) -> dict:
         # UI burada result["stats"]["seans_takvimi_count"] gibi anahtarlar bekliyor (KeyError fix)
+        # NOT (P0-B): 'records' tablosu konsolidasyonla kaldirildi. records_count
+        # burada 0 olarak korunuyor - Adim 5'te app_ui.py'deki DB Saglik ekrani
+        # (satir ~1567) guncellenene kadar KeyError'i onlemek icin.
         tables = {
             "seans_takvimi": self.table_exists("seans_takvimi"),
-            "records": self.table_exists("records"),
             "kasa_hareketleri": self.table_exists("kasa_hareketleri"),
             "odeme_hareketleri": self.table_exists("odeme_hareketleri"),
         }
@@ -1059,7 +1020,7 @@ class DataPipeline:
                 return 0
 
         stats["seans_takvimi_count"] = _count("seans_takvimi")
-        stats["records_count"] = _count("records")
+        stats["records_count"] = 0
         stats["kasa_hareketleri_count"] = _count("kasa_hareketleri")
         stats["odeme_hareketleri_count"] = _count("odeme_hareketleri")
 
@@ -1202,8 +1163,8 @@ class DataPipeline:
             return False
         if not self._validate_amount(tutar, "Toplu ödeme tutarı", 0.01):
             return False
-        if not self.table_exists("records"):
-            self._set_error("Records tablosu bulunamadı.")
+        if not self.table_exists("seans_takvimi"):
+            self._set_error("seans_takvimi tablosu bulunamadı.")
             return False
 
         try:
@@ -1213,8 +1174,8 @@ class DataPipeline:
 
             self.cur.execute(
                 """
-                SELECT id, COALESCE(kalan_borc,0), COALESCE(alinan_ucret,0), COALESCE(hizmet_bedeli,0), COALESCE(seans_id,0), terapist
-                FROM records
+                SELECT id, COALESCE(kalan_borc,0), COALESCE(alinan_ucret,0), COALESCE(hizmet_bedeli,0), terapist
+                FROM seans_takvimi
                 WHERE UPPER(TRIM(danisan_adi))=? AND COALESCE(kalan_borc,0)>0
                 ORDER BY tarih ASC, id ASC
                 """,
@@ -1232,7 +1193,7 @@ class DataPipeline:
                 self.conn.rollback()
                 return False
 
-            for rid, kalan_borc, alinan_ucret, hizmet_bedeli, seans_id_raw, terapist in borclar:
+            for rid, kalan_borc, alinan_ucret, hizmet_bedeli, terapist in borclar:
                 if kalan_odeme <= 0:
                     break
                 kalan_borc = self._safe_float(kalan_borc)
@@ -1243,21 +1204,20 @@ class DataPipeline:
                 yeni_kalan = max(0.0, self._safe_float(hizmet_bedeli) - yeni_alinan)
 
                 self.cur.execute(
-                    "UPDATE records SET alinan_ucret=?, kalan_borc=? WHERE id=?",
-                    (yeni_alinan, yeni_kalan, rid),
+                    "UPDATE seans_takvimi SET alinan_ucret=?, kalan_borc=?, ucret_alindi=? WHERE id=?",
+                    (yeni_alinan, yeni_kalan, 1 if yeni_kalan <= 0 else 0, rid),
                 )
 
                 if self.table_exists("odeme_hareketleri"):
                     self.cur.execute(
                         """
                         INSERT INTO odeme_hareketleri
-                        (record_id, tutar, tarih, odeme_sekli, aciklama, olusturma_tarihi, olusturan_kullanici_id)
+                        (seans_id, tutar, tarih, odeme_sekli, aciklama, olusturma_tarihi, olusturan_kullanici_id)
                         VALUES (?,?,?,?,?,?,?)
                         """,
                         (rid, odenecek, today, "", aciklama, self._now(), self.kullanici_id),
                     )
 
-                seans_id = int(seans_id_raw or 0) or None
                 self._add_kasa(
                     tarih=today,
                     tip="giren",
@@ -1265,12 +1225,9 @@ class DataPipeline:
                     tutar=odenecek,
                     odeme_sekli="",
                     gider_kategorisi="Tahsilat",
-                    record_id=int(rid),
-                    seans_id=seans_id,
+                    record_id=None,
+                    seans_id=int(rid),
                 )
-
-                if seans_id and self.table_exists("seans_takvimi") and yeni_kalan <= 0:
-                    self.cur.execute("UPDATE seans_takvimi SET ucret_alindi=1 WHERE id=?", (seans_id,))
 
                 kalan_odeme -= odenecek
 
@@ -1293,7 +1250,7 @@ class DataPipeline:
             self.cur.execute(
                 """
                 SELECT id, COALESCE(tarih,''), COALESCE(aciklama,''), COALESCE(tutar,0),
-                       COALESCE(record_id,0), COALESCE(tip,''), COALESCE(gider_kategorisi,'')
+                       COALESCE(seans_id,0), COALESCE(tip,''), COALESCE(gider_kategorisi,'')
                 FROM kasa_hareketleri
                 ORDER BY id DESC
                 """
@@ -1322,8 +1279,8 @@ class DataPipeline:
 
                 rec_ad = ""
                 rec_ok = False
-                if rid > 0 and self.table_exists("records"):
-                    self.cur.execute("SELECT COALESCE(danisan_adi,'') FROM records WHERE id=?", (rid,))
+                if rid > 0 and self.table_exists("seans_takvimi"):
+                    self.cur.execute("SELECT COALESCE(danisan_adi,'') FROM seans_takvimi WHERE id=?", (rid,))
                     rr = self.cur.fetchone()
                     rec_ad = str((rr or [""])[0] or "")
                     rec_ok = bool(rec_ad)

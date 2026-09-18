@@ -748,6 +748,57 @@ class App(ttk.Window):
     def toplam_rapor_pencere(self):
         self._rapor_pencere("0001-01-01", "9999-12-31", title="Toplam Rapor (Genel)")
 
+    def _range_summary(self, bas: str, bit: str, terapist_filter: str | None = None) -> dict:
+        sonuc = {
+            "seans_sayisi": 0, "bedel_toplam": 0.0, "alinan_toplam": 0.0, "kalan_toplam": 0.0,
+            "kasa_giren": 0.0, "kasa_cikan": 0.0,
+        }
+        conn = None
+        try:
+            conn = self.veritabani_baglan()
+            cur = conn.cursor()
+
+            sql_seans = """
+                SELECT COUNT(*), COALESCE(SUM(hizmet_bedeli),0), COALESCE(SUM(alinan_ucret),0), COALESCE(SUM(kalan_borc),0)
+                FROM seans_takvimi
+                WHERE tarih>=? AND tarih<=?
+                  AND (durum != 'devir_borc' OR COALESCE(kalan_borc,0) > 0)
+            """
+            params_seans = [bas, bit]
+            if terapist_filter:
+                sql_seans += " AND COALESCE(terapist,'')=?"
+                params_seans.append(terapist_filter)
+            cur.execute(sql_seans, params_seans)
+            adet, bedel, alinan, kalan = cur.fetchone() or (0, 0, 0, 0)
+            sonuc["seans_sayisi"] = int(adet or 0)
+            sonuc["bedel_toplam"] = float(bedel or 0)
+            sonuc["alinan_toplam"] = float(alinan or 0)
+            sonuc["kalan_toplam"] = float(kalan or 0)
+
+            sql_kasa = """
+                SELECT COALESCE(SUM(CASE WHEN tip='giren' THEN tutar ELSE 0 END),0),
+                       COALESCE(SUM(CASE WHEN tip IN ('cikan','çıkan') THEN tutar ELSE 0 END),0)
+                FROM kasa_hareketleri
+                WHERE tarih>=? AND tarih<=?
+            """
+            params_kasa = [bas, bit]
+            if terapist_filter:
+                sql_kasa += " AND (seans_id IN (SELECT id FROM seans_takvimi WHERE terapist=?))"
+                params_kasa.append(terapist_filter)
+            cur.execute(sql_kasa, params_kasa)
+            giren, cikan = cur.fetchone() or (0, 0)
+            sonuc["kasa_giren"] = float(giren or 0)
+            sonuc["kasa_cikan"] = float(cikan or 0)
+        except Exception as e:
+            log_exception("_range_summary", e)
+        finally:
+            try:
+                if conn is not None:
+                    conn.close()
+            except Exception:
+                pass
+        return sonuc
+
     def _rapor_pencere(self, bas: str, bit: str, title: str):
         win = ttk.Toplevel(self)
         win.title(title)
@@ -3921,7 +3972,7 @@ class App(ttk.Window):
                                     danisan_clean = danisan.strip()
                                     cur.execute("""
                                         SELECT id FROM danisanlar 
-                                        WHERE UPPER(REPLACE(REPLACE(ad_soyad, 'İ', 'I'), 'ı', 'I')) = UPPER(REPLACE(REPLACE(?, 'İ', 'I'), 'ı', 'I')) 
+                                        WHERE UPPER(ad_soyad) = UPPER(?)
                                         AND aktif = 1 LIMIT 1
                                     """, (danisan_clean,))
                                     
@@ -4743,24 +4794,26 @@ class App(ttk.Window):
         try:
             conn = self.veritabani_baglan()
             cur = conn.cursor()
-            
-            # Kasa hareketlerini çek
-            cur.execute(
-                """
-                SELECT 
+
+            # Kasa hareketlerini çek (eğitim görevlisi sadece kendi seanslarına ait hareketleri görür)
+            sql_kasa = """
+                SELECT
                     id, tarih, tip, aciklama, tutar, odeme_sekli, record_id, seans_id
                 FROM kasa_hareketleri
                 WHERE tarih >= ? AND tarih <= ?
-                ORDER BY tarih DESC, id DESC
-                """,
-                (baslangic, bitis)
-            )
+            """
+            params_kasa = [baslangic, bitis]
+            if self.kullanici_yetki != "kurum_muduru" and self.kullanici_terapist:
+                sql_kasa += " AND (seans_id IN (SELECT id FROM seans_takvimi WHERE terapist=?))"
+                params_kasa.append(self.kullanici_terapist)
+            sql_kasa += " ORDER BY tarih DESC, id DESC"
+            cur.execute(sql_kasa, params_kasa)
             rows = cur.fetchall()
-            
+
             # Özet hesapla
             toplam_giren = 0.0
             toplam_cikan = 0.0
-            
+
             for idx, row in enumerate(rows):
                 kasa_id, tarih, tip, aciklama, tutar, odeme_sekli, record_id, seans_id = row
                 tip_norm = (tip or "").strip().lower().replace("ı", "i").replace("ç", "c")
@@ -4859,20 +4912,22 @@ class App(ttk.Window):
         try:
             conn = self.veritabani_baglan()
             cur = conn.cursor()
-            
-            # Kasa hareketlerini çek
-            cur.execute(
-                """
-                SELECT 
+
+            # Kasa hareketlerini çek (eğitim görevlisi sadece kendi seanslarına ait hareketleri görür)
+            sql_kasa = """
+                SELECT
                     id, tarih, tip, aciklama, tutar, odeme_sekli, record_id, seans_id
                 FROM kasa_hareketleri
                 WHERE tarih >= ? AND tarih <= ?
-                ORDER BY tarih DESC, id DESC
-                """,
-                (baslangic, bitis)
-            )
+            """
+            params_kasa = [baslangic, bitis]
+            if self.kullanici_yetki != "kurum_muduru" and self.kullanici_terapist:
+                sql_kasa += " AND (seans_id IN (SELECT id FROM seans_takvimi WHERE terapist=?))"
+                params_kasa.append(self.kullanici_terapist)
+            sql_kasa += " ORDER BY tarih DESC, id DESC"
+            cur.execute(sql_kasa, params_kasa)
             rows = cur.fetchall()
-            
+
             if not rows:
                 messagebox.showwarning("Uyarı", "Seçilen rapor kapsamında kasa hareketi bulunamadı!")
                 conn.close()
@@ -7317,143 +7372,8 @@ class App(ttk.Window):
         # İlk yükleme
         fiyatlari_yukle()
     
-    # Sistem Şifreleri fonksiyonları - KALDIRILDI (Kullanıcı isteği)
-    
-    def _sifre_duzenle(self, parent, tree):
-        """Sistem şifresi düzenle"""
-        sel = tree.selection()
-        if not sel:
-            return
-        
-        sifre_id = tree.item(sel[0])["values"][0]
-        
-        # ✅ DÜZELTME: Gerçek şifre düzenleme penceresi
-        try:
-            conn = self.veritabani_baglan()
-            cur = conn.cursor()
-            cur.execute(
-                """
-                SELECT platform_adi, kullanici_adi, sifre, aciklama, olusturma_tarihi
-                FROM sistem_sifreleri WHERE id = ?
-                """,
-                (sifre_id,)
-            )
-            row = cur.fetchone()
-            conn.close()
-            
-            if not row:
-                messagebox.showerror("Hata", "Şifre kaydı bulunamadı.")
-                return
-            
-            win = ttk.Toplevel(self)
-            win.title(f"Şifre Düzenle - {row[0]}")
-            center_window_smart(win, 500, 400, max_ratio=0.9)
-            win.transient(self)
-            win.grab_set()
-            self._brand_window(win)
-            
-            wrapper = ttk.Frame(win, padding=20)
-            wrapper.pack(fill=BOTH, expand=True)
-            
-            ttk.Label(wrapper, text=f"Şifre Düzenle: {row[0]}", font=("Segoe UI", 14, "bold"), bootstyle="primary").pack(pady=(0, 20))
-            
-            ttk.Label(wrapper, text="Platform Adı:").pack(anchor=W, pady=(5, 0))
-            ent_platform = ttk.Entry(wrapper, width=40)
-            ent_platform.insert(0, row[0] or "")
-            ent_platform.pack(fill=X, pady=5)
-            
-            ttk.Label(wrapper, text="Kullanıcı Adı:").pack(anchor=W, pady=(10, 0))
-            ent_kullanici = ttk.Entry(wrapper, width=40)
-            ent_kullanici.insert(0, row[1] or "")
-            ent_kullanici.pack(fill=X, pady=5)
-            
-            ttk.Label(wrapper, text="Şifre:").pack(anchor=W, pady=(10, 0))
-            ent_sifre = ttk.Entry(wrapper, width=40, show="*")
-            ent_sifre.insert(0, row[2] or "")
-            ent_sifre.pack(fill=X, pady=5)
-            
-            ttk.Label(wrapper, text="Açıklama:").pack(anchor=W, pady=(10, 0))
-            txt_aciklama = ttk.Text(wrapper, height=3, wrap=WORD)
-            txt_aciklama.insert("1.0", row[3] or "")
-            txt_aciklama.pack(fill=X, pady=5)
-            
-            def _kaydet():
-                try:
-                    conn = self.veritabani_baglan()
-                    cur = conn.cursor()
-                    cur.execute(
-                        """
-                        UPDATE sistem_sifreleri
-                        SET platform_adi=?, kullanici_adi=?, sifre=?, aciklama=?, guncelleme_tarihi=?
-                        WHERE id=?
-                        """,
-                        (
-                            (ent_platform.get() or "").strip(),
-                            (ent_kullanici.get() or "").strip(),
-                            (ent_sifre.get() or "").strip(),
-                            (txt_aciklama.get("1.0", END) or "").strip(),
-                            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            sifre_id
-                        )
-                    )
-                    conn.commit()
-                    conn.close()
-                    
-                    messagebox.showinfo("Başarılı", "Şifre kaydı güncellendi!")
-                    win.destroy()
-                    if hasattr(parent, "_reload"):
-                        parent._reload()
-                except Exception as e:
-                    messagebox.showerror("Hata", f"Şifre güncellenemedi:\n{e}")
-                    log_exception("_sifre_duzenle", e)
-            
-            ttk.Button(wrapper, text="💾 Kaydet", bootstyle="success", command=_kaydet).pack(pady=20)
-            
-        except Exception as e:
-            messagebox.showerror("Hata", f"Şifre bilgileri yüklenemedi:\n{e}")
-            log_exception("_sifre_duzenle", e)
-    
-    def _sifre_sil(self, parent, tree):
-        """Sistem şifresi sil"""
-        sel = tree.selection()
-        if not sel:
-            return
-        
-        sifre_id = tree.item(sel[0])["values"][0]
-        
-        if not messagebox.askyesno(
-            "Onay",
-            f"{danisan_adi} danışanını listeden kaldırmak istediğinize emin misiniz?\n\n"
-            "Bu işlem danışanı pasife alır (aktif=0).",
-        ):
-            return
-        
-        try:
-            conn = self.veritabani_baglan()
-            cur = conn.cursor()
-            cur.execute("DELETE FROM sistem_sifreleri WHERE id = ?", (sifre_id,))
-            conn.commit()
-            conn.close()
-            
-            messagebox.showinfo("Başarılı", "Şifre kaydı silindi.")
-            self._sifreler_listele(parent)
-        
-        except Exception as e:
-            messagebox.showerror("Hata", f"Şifre silinemedi:\n{e}")
-            log_exception("_sifre_sil", e)
-    
-    def _sifre_kopyala(self, tree):
-        """Şifreyi panoya kopyala"""
-        sel = tree.selection()
-        if not sel:
-            return
-        
-        sifre = tree.item(sel[0])["values"][3]
-        if sifre:
-            self.clipboard_clear()
-            self.clipboard_append(sifre)
-            messagebox.showinfo("Başarılı", "Şifre panoya kopyalandı!")
-    
+    # Sistem Şifreleri sekmesi ve ilgili fonksiyonlar kaldırıldı (kullanıcı isteği).
+
     def _build_settings_tab(self):
         # ✅ SMART LOGS: Kurum Müdürü için Sistem Günlüğü arayüzü
         if self.kullanici_yetki == "kurum_muduru":

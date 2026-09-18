@@ -2,6 +2,28 @@ import sqlite3
 from .paths import db_path
 
 
+def _tr_upper(s):
+    """SQLite'in varsayılan UPPER()'ı sadece ASCII'yi büyütür; Türkçe İ/ı/i/I
+    dörtlüsünü birbirinden ayrı harfler sanar (ör. 'İzmir' != 'izmir' olur).
+    Karşılaştırmalarda bu dörtlüyü tek harfe (I) indirger."""
+    if s is None:
+        return None
+    return str(s).replace("İ", "I").replace("ı", "I").upper()
+
+
+def _tr_lower(s):
+    """_tr_upper'ın küçük harf karşılığı: İ/I -> i/ı olarak doğru Türkçe
+    küçültme yapar, ardından geri kalanı (ç,ğ,ö,ş,ü dahil) normal lower() eder."""
+    if s is None:
+        return None
+    return str(s).replace("İ", "i").replace("I", "ı").lower()
+
+
+def _register_turkish_collation(conn: sqlite3.Connection) -> None:
+    conn.create_function("UPPER", 1, _tr_upper, deterministic=True)
+    conn.create_function("LOWER", 1, _tr_lower, deterministic=True)
+
+
 DEFAULT_THERAPISTS = [
     "Pervin Hoca",
     "Çağlar Hoca",
@@ -444,6 +466,7 @@ def _migrate_records_into_seans_takvimi(conn: sqlite3.Connection) -> None:
 def connect_db() -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path()))
     conn.row_factory = sqlite3.Row
+    _register_turkish_collation(conn)
     _ensure_minimum_schema(conn)
     conn.commit()
     return conn

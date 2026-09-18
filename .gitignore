@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*.log
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtualenv
+.venv/
+venv/
+
+# Cursor/IDE
+.cursor/
+.cursorrules
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# App data / DB / backups (asla repoya koyma)
+*.db
+*.db-wal
+*.db-shm
+Yedekler/
+veriler/
+
+# Builds / artifacts (CI üretsin)
+build/
+build_build/
+dist_build/
+dist/
+# *.spec  # Spec dosyası gerekli, commit edilmeli
+*.exe
+*.app
+*.dmg
+*.pkg
+*.AppImage
+*.deb
+*.rpm
+AppDir/
+
+# Archive folder (lokalde dursun, repoya gerek yok)
+ARCHIVE/
+
+# Yerel tam yedek kopyaları (içerik repoya eklenmez)
+backup_v1_3_legacy_*/
+
+# Kullanılmayan modül klasörü
+leta_modules/
+
+# Dahili geliştirici notları ve derleme araçları (repoda yayımlanmaz)
+BeniOku dosyaları/
+installer/
+packaging/
+scripts/
+*.spec
+KULLANIM_KILAVUZU.txt
+.gitattributes

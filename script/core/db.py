@@ -176,33 +176,30 @@ def _ensure_minimum_schema(conn: sqlite3.Connection) -> None:
             ucret_alindi INTEGER DEFAULT 0,
             olusturma_tarihi TEXT,
             olusturan_kullanici_id INTEGER,
-            record_id INTEGER
-        )
-        """
-    )
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            tarih TEXT NOT NULL,
-            saat TEXT,
-            danisan_adi TEXT,
-            terapist TEXT,
-            hizmet_bedeli REAL DEFAULT 0,
+            record_id INTEGER,
             alinan_ucret REAL DEFAULT 0,
-            kalan_borc REAL DEFAULT 0,
-            seans_alindi INTEGER DEFAULT 0,
-            notlar TEXT DEFAULT '',
-            olusturma_tarihi TEXT,
-            seans_id INTEGER
+            kalan_borc REAL DEFAULT 0
         )
         """
     )
+    # P0-B konsolidasyonu: mevcut bir DB'de seans_takvimi zaten olusmus
+    # olabilir (yeni kolonlar olmadan) - eksikse ekle.
+    try:
+        cur.execute("PRAGMA table_info(seans_takvimi)")
+        st_cols = [r[1] for r in cur.fetchall()]
+        if "alinan_ucret" not in st_cols:
+            cur.execute("ALTER TABLE seans_takvimi ADD COLUMN alinan_ucret REAL DEFAULT 0")
+        if "kalan_borc" not in st_cols:
+            cur.execute("ALTER TABLE seans_takvimi ADD COLUMN kalan_borc REAL DEFAULT 0")
+    except Exception:
+        pass
+
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS odeme_hareketleri (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             record_id INTEGER,
+            seans_id INTEGER,
             tutar REAL DEFAULT 0,
             tarih TEXT,
             odeme_sekli TEXT DEFAULT '',
@@ -212,6 +209,14 @@ def _ensure_minimum_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    # P0-B konsolidasyonu: odeme_hareketleri'nde seans_id eksikse ekle.
+    try:
+        cur.execute("PRAGMA table_info(odeme_hareketleri)")
+        oh_cols = [r[1] for r in cur.fetchall()]
+        if "seans_id" not in oh_cols:
+            cur.execute("ALTER TABLE odeme_hareketleri ADD COLUMN seans_id INTEGER")
+    except Exception:
+        pass
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS kasa_hareketleri (
@@ -346,36 +351,10 @@ def init_db() -> None:
     _ensure_minimum_schema(conn)
 
     # Geriye dönük legacy tablolar (eski scriptler için)
+    # NOT (P0-B): 'seanslar' ve 'kayitlar' kaldirildi - kod tabaninda hicbir
+    # sorgu bu iki tabloyu kullanmiyordu (spec-p0b-veri-kaynagi-konsolidasyonu.md
+    # Bolum 2.1, dogrulandi). 'kasa' (asagida) farkli bir tablo, dokunulmadi.
     cur = conn.cursor()
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS seanslar (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            tarih TEXT NOT NULL,
-            saat TEXT,
-            danisan TEXT NOT NULL,
-            terapist TEXT NOT NULL,
-            ucret REAL DEFAULT 0,
-            alinan REAL DEFAULT 0,
-            kalan REAL DEFAULT 0,
-            notlar TEXT
-        )
-        """
-    )
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS kayitlar (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            seans_id INTEGER,
-            tarih TEXT NOT NULL,
-            danisan TEXT NOT NULL,
-            terapist TEXT,
-            ucret REAL DEFAULT 0,
-            alinan REAL DEFAULT 0,
-            kalan_borc REAL DEFAULT 0
-        )
-        """
-    )
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS kasa (

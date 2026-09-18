@@ -1,6 +1,6 @@
 # Plan: P0-A — Para Formatı, Sessiz Hata ve Yol Düzeltmeleri
 
-Kaynak: `spec-p0a-para-ve-hata-duzeltmeleri.md`.
+Kaynak: `spec/p0a-para-ve-hata-duzeltmeleri.md`.
 Status: draft — Batuhan onayı bekliyor. Onaylanıp commit'lenmeden kod
 aşamasına geçilmez.
 
@@ -141,7 +141,7 @@ formatı değişikliği için round-trip senaryosu titiz tutuluyor.
 
 - Bu `plan.md` dosyası commit edilmez — Batuhan okur, onaylar, kendisi
   commit'ler.
-- Kod aşamasına bu plan VE `spec-p0a-para-ve-hata-duzeltmeleri.md`
+- Kod aşamasına bu plan VE `spec/p0a-para-ve-hata-duzeltmeleri.md`
   onaylanıp commit'lenmeden geçilmez.
 - Kod tamamlandıktan sonra da commit'i Batuhan atar, Claude atmaz.
 

@@ -6,7 +6,7 @@ Durum: taslak — Batuhan onayı bekliyor.
 ## 1. Özellik özeti
 
 Mevcut "📈 Aylık Özet / Performans" sekmesine (uygulandı, `spec.md` /
-`plan.md` — artık `spec-personel-performans-takibi.md` olarak arşivlendi)
+`plan.md` — artık `spec/personel-performans-takibi.md` olarak arşivlendi)
 bir **Dönem tipi** seçici eklenir: **Günlük / Aylık / Yıllık**. Seçilen
 tipe göre aynı kartlar (Verim, Kazanç) ve aynı 3 satırlık karşılaştırma
 tablosu, farklı bir zaman biriminde gruplanmış veriyle doldurulur.
@@ -135,5 +135,5 @@ Mevcut kodun genelleştirilmesi (yeniden yazım değil) — küçük/orta.
 ---
 
 **Onay noktası:** Bu dosyayı Claude yazar, Batuhan okur / düzeltir / commit'ler.
-Kod yazımı ancak bu dosya commit'lendikten ve `plan-personel-performans-donem-secici.md`
+Kod yazımı ancak bu dosya commit'lendikten ve `plan/personel-performans-donem-secici.md`
 onaylandıktan sonra başlar.

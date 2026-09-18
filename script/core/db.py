@@ -456,7 +456,7 @@ def init_db() -> None:
 
     # Geriye dönük legacy tablolar (eski scriptler için)
     # NOT (P0-B): 'seanslar' ve 'kayitlar' kaldirildi - kod tabaninda hicbir
-    # sorgu bu iki tabloyu kullanmiyordu (spec-p0b-veri-kaynagi-konsolidasyonu.md
+    # sorgu bu iki tabloyu kullanmiyordu (spec/p0b-veri-kaynagi-konsolidasyonu.md
     # Bolum 2.1, dogrulandi). 'kasa' (asagida) farkli bir tablo, dokunulmadi.
     cur = conn.cursor()
     cur.execute(

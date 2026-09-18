@@ -1,6 +1,6 @@
 # Plan: Personel Performans — Günlük / Aylık / Yıllık Dönem Seçici
 
-Kaynak spec: `spec-personel-performans-donem-secici.md` (onaylı).
+Kaynak spec: `spec/personel-performans-donem-secici.md` (onaylı).
 Durum: taslak — Batuhan onayı bekliyor. Onaylanmadan kod yazımı başlamaz.
 
 Tek dosyalı değişiklik (`script/app_ui.py`), mevcut çalışan bir özelliğin

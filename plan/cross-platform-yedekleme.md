@@ -1,6 +1,6 @@
 # Plan: Çapraz Platform Veri Güvenliği ve Yedekleme
 
-Kaynak: `spec-cross-platform-yedekleme.md` (Batuhan tarafından onaylandı).
+Kaynak: `spec/cross-platform-yedekleme.md` (Batuhan tarafından onaylandı).
 Status: draft — Batuhan onayı bekliyor. Onaylanıp commit'lenmeden kod
 aşamasına geçilmez.
 

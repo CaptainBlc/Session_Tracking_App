@@ -63,6 +63,30 @@ script/
 
 ---
 
+## Geliştirme Süreci / Development Process
+
+Her özellik/düzeltme aynı çizgiden geçer: **intent → spec → plan → kod**.
+Bu adımların kayıtları aşağıdaki klasörlerde tutulur (denetim izi olarak):
+
+Every feature/fix follows the same line: **intent → spec → plan → code**.
+Records of these stages are kept in the folders below (as an audit trail):
+
+```
+intent/   # Problem tanımı: ne, kim için, neden şimdi / Problem statement: what, for whom, why now
+spec/     # Çözüm tasarımı: nasıl, hangi dosyalar değişir / Solution design: how, which files change
+plan/     # Uygulama sırası: adım adım, doğrulama checklist'i / Implementation order: steps, verification checklist
+```
+
+Her dosya adı ilgili özelliğin kısa açıklamasıdır (`intent/`'te tarih
+önekiyle). Bir özelliğin tam geçmişini görmek için üç klasörde de aynı
+adı arayın.
+
+Each filename is a short slug for that feature (dated in `intent/`). To
+see a feature's full history, look for the same name across all three
+folders.
+
+---
+
 ## Kullanım / Usage
 
 Detaylı kullanım kılavuzu (Türkçe + English): [KULLANIM_KILAVUZU.md](KULLANIM_KILAVUZU.md)

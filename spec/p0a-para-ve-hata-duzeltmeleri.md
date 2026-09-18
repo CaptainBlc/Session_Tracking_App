@@ -5,7 +5,7 @@ Durum: taslak — Batuhan onayı bekliyor.
 
 Bu spec, P0 paketinin **düşük riskli, mekanik** parçasını kapsar (madde
 1, 3, 4, 5). Parça B (`records`/`seans_takvimi` konsolidasyonu, madde 2/10)
-ayrı bir spec'te (`spec-p0b-...`), software-architect tarafından ele alınıyor.
+ayrı bir spec'te (`spec/p0b-...`), software-architect tarafından ele alınıyor.
 
 ## 1. `format_money` / `parse_money` tutarsızlığı (madde 1)
 
@@ -181,5 +181,5 @@ ayrı bir özellik, bu spec'te yok.
 ---
 
 **Onay noktası:** Bu dosyayı Claude yazar, Batuhan okur / düzeltir / commit'ler.
-Kod yazımı ancak bu dosya commit'lendikten ve `plan-p0a-...` onaylandıktan
+Kod yazımı ancak bu dosya commit'lendikten ve `plan/p0a-...` onaylandıktan
 sonra başlar.

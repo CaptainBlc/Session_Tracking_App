@@ -1,6 +1,6 @@
 # Plan: P0 Parça B — `records` / `seans_takvimi` Veri Kaynağı Konsolidasyonu
 
-Kaynak: `spec-p0b-veri-kaynagi-konsolidasyonu.md`.
+Kaynak: `spec/p0b-veri-kaynagi-konsolidasyonu.md`.
 Status: draft — Batuhan onayı bekliyor. Onaylanıp commit'lenmeden kod
 aşamasına geçilmez.
 
@@ -175,7 +175,7 @@ daha koşulur (regresyon garantisi).
 
 - Bu `plan.md` dosyası commit edilmez — Batuhan okur, onaylar, kendisi
   commit'ler.
-- Kod aşamasına bu plan VE `spec-p0b-veri-kaynagi-konsolidasyonu.md`
+- Kod aşamasına bu plan VE `spec/p0b-veri-kaynagi-konsolidasyonu.md`
   onaylanıp commit'lenmeden geçilmez.
 - **Sıra şartı:** Parça A önce commit'lenmiş olmalı (Bölüm 1).
 - Kod tamamlandıktan sonra da commit'i Batuhan atar, Claude atmaz.

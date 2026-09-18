@@ -336,6 +336,110 @@ def _ensure_minimum_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
+    _migrate_records_into_seans_takvimi(conn)
+
+
+def _migrate_records_into_seans_takvimi(conn: sqlite3.Connection) -> None:
+    """
+    P0-B tek seferlik veri gocu: eski 'records' tablosu varsa (gercek
+    kurulumlarda gecmis tahsilat/borc verisi tutuyor olabilir), icerigi
+    seans_takvimi'ye tasinir. 'records' hicbir zaman DROP edilmez -
+    gercek kurum verisiyle calisirken geri donus payi olsun diye
+    'records_migrated_backup' olarak yeniden adlandirilir. 'records'
+    tablosu yoksa (yeni kurulum ya da zaten gocmus DB) hemen cikar - bu
+    yuzden fonksiyon her baglantida cagrilsa bile pratikte tek seferlik
+    calisir.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='records'")
+        if not cur.fetchone():
+            return
+    except Exception:
+        return
+
+    try:
+        # _ensure_minimum_schema onceki CREATE/ALTER ifadeleriyle acik bir
+        # (ambient) islem birakmis olabilir - kendi BEGIN'imizi baslatmadan
+        # once onu kapatiyoruz, boylece bir hata durumunda rollback SADECE
+        # bu gocu geri alir, kardes sema degisikliklerini etkilemez.
+        conn.commit()
+        cur.execute("BEGIN")
+
+        # 1) records satiri bir seans_takvimi satirina bagliysa (iki yonlu
+        #    eski FK'nin herhangi birinden) -> o seans_takvimi satirinin
+        #    alinan_ucret/kalan_borc kolonlarini records'tan kopyala.
+        cur.execute(
+            """
+            UPDATE seans_takvimi
+            SET alinan_ucret = (
+                    SELECT COALESCE(r.alinan_ucret,0) FROM records r
+                    WHERE r.seans_id = seans_takvimi.id OR r.id = seans_takvimi.record_id
+                    ORDER BY r.id DESC LIMIT 1
+                ),
+                kalan_borc = (
+                    SELECT COALESCE(r.kalan_borc,0) FROM records r
+                    WHERE r.seans_id = seans_takvimi.id OR r.id = seans_takvimi.record_id
+                    ORDER BY r.id DESC LIMIT 1
+                )
+            WHERE EXISTS (
+                SELECT 1 FROM records r
+                WHERE r.seans_id = seans_takvimi.id OR r.id = seans_takvimi.record_id
+            )
+            """
+        )
+        updated = cur.rowcount
+
+        # 2) records satiri hicbir seans_takvimi satirina bagli degilse
+        #    (bagimsiz/devir borc kaydi) -> veri kaybolmasin diye yeni bir
+        #    devir_borc satiri olarak seans_takvimi'ye eklenir (bkz.
+        #    pipeline.eski_borc_ekle ile ayni sekil).
+        cur.execute(
+            """
+            INSERT INTO seans_takvimi
+                (tarih, saat, danisan_adi, terapist, oda, durum, notlar,
+                 hizmet_bedeli, odeme_sekli, seans_alindi, ucret_alindi,
+                 olusturma_tarihi, olusturan_kullanici_id, record_id,
+                 alinan_ucret, kalan_borc)
+            SELECT
+                COALESCE(r.tarih,''), COALESCE(r.saat,''), COALESCE(r.danisan_adi,''),
+                COALESCE(r.terapist,''), '', 'devir_borc',
+                ('Devir Borç (eski kayıttan taşındı) | ' || COALESCE(r.notlar,'')),
+                COALESCE(r.hizmet_bedeli,0), '', COALESCE(r.seans_alindi,0), 0,
+                COALESCE(r.olusturma_tarihi,''), NULL, NULL,
+                COALESCE(r.alinan_ucret,0), COALESCE(r.kalan_borc,0)
+            FROM records r
+            WHERE NOT EXISTS (
+                SELECT 1 FROM seans_takvimi st
+                WHERE st.id = r.seans_id OR st.record_id = r.id
+            )
+            """
+        )
+        inserted = cur.rowcount
+
+        cur.execute("ALTER TABLE records RENAME TO records_migrated_backup")
+
+        cur.execute(
+            "INSERT INTO sistem_gunlugu (tarih, olay, aciklama, olusturma_tarihi) VALUES (date('now'), 'P0B_MIGRATION', ?, datetime('now'))",
+            (
+                f"records -> seans_takvimi gocu tamamlandi: {updated} satir guncellendi, "
+                f"{inserted} yeni devir_borc satiri eklendi, records -> records_migrated_backup "
+                f"olarak yeniden adlandirildi.",
+            ),
+        )
+
+        conn.commit()
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        try:
+            from .logging_utils import log_exception
+            log_exception("_migrate_records_into_seans_takvimi", e)
+        except Exception:
+            pass
+
 
 def connect_db() -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path()))

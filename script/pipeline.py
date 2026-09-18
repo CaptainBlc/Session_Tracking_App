@@ -857,7 +857,7 @@ class DataPipeline:
         if self.table_exists("seans_takvimi"):
             try:
                 self.cur.execute(
-                    "SELECT COUNT(*) FROM seans_takvimi WHERE tarih=? AND COALESCE(durum,'')!='iptal'",
+                    "SELECT COUNT(*) FROM seans_takvimi WHERE tarih=? AND COALESCE(durum,'') NOT IN ('iptal','devir_borc')",
                     (today,),
                 )
                 out["operasyonel"]["bugun_toplam_seans"] = int((self.cur.fetchone() or [0])[0] or 0)

@@ -247,23 +247,23 @@ class App(ttk.Window):
         return
 
      values = tree.item(sel[0], "values") or []
-     if len(values) < 7:
+     if len(values) < 8:
         messagebox.showerror("Hata", "Seçili satır formatı beklenenden farklı.")
         return
 
-     kayit_txt = str(values[6] or "").strip()
-     record_id = None
-     if kayit_txt.startswith("Kayıt #"):
+     seans_txt = str(values[7] or "").strip()
+     seans_id = None
+     if seans_txt.startswith("Seans #"):
         try:
-            record_id = int(kayit_txt.replace("Kayıt #", "").strip())
+            seans_id = int(seans_txt.replace("Seans #", "").strip())
         except Exception:
-            record_id = None
+            seans_id = None
 
-     if not record_id:
+     if not seans_id:
         messagebox.showwarning(
             "Uyarı",
-            "Bu kasa hareketi bir 'Kayıt #...' ile bağlı değil.\n"
-            "Ödeme ekleme için Seans/Record bağlı satır seçmelisin.",
+            "Bu kasa hareketi bir seansa bağlı değil.\n"
+            "Ödeme ekleme için seansa bağlı bir satır seçmelisin.",
         )
         return
 
@@ -282,7 +282,7 @@ class App(ttk.Window):
      frm = ttk.Frame(win, padding=12)
      frm.pack(fill="both", expand=True)
 
-     ttk.Label(frm, text=f"İlgili Kayıt: #{record_id}", font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(0, 10))
+     ttk.Label(frm, text=f"İlgili Seans: #{seans_id}", font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(0, 10))
 
      row1 = ttk.Frame(frm)
      row1.pack(fill="x", pady=5)
@@ -325,7 +325,7 @@ class App(ttk.Window):
 
         ok = False
         try:
-            ok = bool(self.pipeline.odeme_ekle(record_id, tutar, tarih, odeme_sekli, "Kasa Defteri Üzerinden"))
+            ok = bool(self.pipeline.odeme_ekle(seans_id, tutar, tarih, odeme_sekli, "Kasa Defteri Üzerinden"))
         except Exception:
             ok = False
 
@@ -724,18 +724,6 @@ class App(ttk.Window):
         except Exception:
             pass
 
-    def _update_sync_badge(self):
-        """SEANS TAKİP ekranındaki 'Belirsiz: X' sayacını güncelle (best-effort)."""
-        try:
-            cnt = len(getattr(self, "_last_sync_ambiguous", []) or [])
-        except Exception:
-            cnt = 0
-        try:
-            if getattr(self, "_sync_badge_lbl", None) is not None:
-                self._sync_badge_lbl.configure(text=f"Belirsiz: {cnt}")
-        except Exception:
-            pass
-
     def _default_saat(self) -> str:
         """Kullanıcı seçmezse: şu anki saat (dakika yuvarlayıp) HH:MM üret."""
         try:
@@ -746,931 +734,6 @@ class App(ttk.Window):
             return f"{h:02d}:{m:02d}"
         except Exception:
             return "09:00"
-
-    def _sync_from_record_to_seans(self, cur, record_id: int, tarih: str, saat: str, danisan: str, terapist: str, notlar: str):
-        """records kaydı varsa seans_takvimi'ne bağla/oluştur."""
-        try:
-            cur.execute("SELECT seans_id FROM records WHERE id=?", (record_id,))
-            seans_id = (cur.fetchone() or [None])[0]
-        except Exception:
-            seans_id = None
-
-        # seans_id varsa: record_id yaz ve çık
-        if seans_id:
-            try:
-                cur.execute("UPDATE seans_takvimi SET record_id=? WHERE id=? AND (record_id IS NULL OR record_id='')", (record_id, seans_id))
-            except Exception:
-                pass
-            return
-
-        # record_id ile daha önce seans var mı?
-        try:
-            cur.execute("SELECT id FROM seans_takvimi WHERE record_id=? ORDER BY id DESC LIMIT 1", (record_id,))
-            row = cur.fetchone()
-            if row and row[0]:
-                sid = int(row[0])
-                cur.execute("UPDATE records SET seans_id=? WHERE id=? AND (seans_id IS NULL OR seans_id='')", (sid, record_id))
-                return
-        except Exception:
-            pass
-
-        # Aynı tarih+saat+danisan+terapist varsa onu bağla, yoksa yeni oluştur
-        sid = None
-        try:
-            cur.execute(
-                """
-                SELECT id FROM seans_takvimi
-                WHERE tarih=? AND saat=? AND danisan_adi=? AND terapist=?
-                ORDER BY id DESC LIMIT 1
-                """,
-                (tarih, saat, danisan, terapist),
-            )
-            row = cur.fetchone()
-            if row and row[0]:
-                sid = int(row[0])
-                cur.execute("UPDATE seans_takvimi SET record_id=? WHERE id=? AND (record_id IS NULL OR record_id='')", (record_id, sid))
-        except Exception:
-            sid = None
-
-        if not sid:
-            try:
-                cur.execute(
-                    """
-                    INSERT INTO seans_takvimi (tarih, saat, danisan_adi, terapist, oda, durum, notlar, olusturma_tarihi, olusturan_kullanici_id, record_id)
-                    VALUES (?,?,?,?,?,?,?,?,?,?)
-                    """,
-                    (
-                        tarih,
-                        saat,
-                        danisan,
-                        terapist,
-                        "",
-                        "planlandi",
-                        notlar or "",
-                        datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        (self.kullanici[0] if self.kullanici else None),
-                        record_id,
-                    ),
-                )
-                sid = int(cur.lastrowid or 0) or None
-            except Exception:
-                sid = None
-
-        if sid:
-            try:
-                cur.execute("UPDATE records SET seans_id=? WHERE id=? AND (seans_id IS NULL OR seans_id='')", (sid, record_id))
-            except Exception:
-                pass
-
-    def _sync_from_seans_to_record(self, cur, seans_id: int, tarih: str, saat: str, danisan: str, terapist: str, notlar: str):
-        """seans_takvimi kaydı varsa records'a bağla/oluştur."""
-        try:
-            cur.execute("SELECT record_id FROM seans_takvimi WHERE id=?", (seans_id,))
-            record_id = (cur.fetchone() or [None])[0]
-        except Exception:
-            record_id = None
-
-        if record_id:
-            try:
-                cur.execute("UPDATE records SET seans_id=? WHERE id=? AND (seans_id IS NULL OR seans_id='')", (seans_id, record_id))
-            except Exception:
-                pass
-            return
-
-        # Aynı tarih+saat+danisan+terapist varsa bağla
-        rid = None
-        try:
-            cur.execute(
-                """
-                SELECT id FROM records
-                WHERE tarih=? AND COALESCE(saat,'')=? AND danisan_adi=? AND terapist=?
-                ORDER BY id DESC LIMIT 1
-                """,
-                (tarih, saat, danisan, terapist),
-            )
-            row = cur.fetchone()
-            if row and row[0]:
-                rid = int(row[0])
-        except Exception:
-            rid = None
-
-        if not rid:
-            try:
-                cur.execute(
-                    """
-                    INSERT INTO records (tarih, saat, danisan_adi, terapist, hizmet_bedeli, alinan_ucret, kalan_borc, seans_id, notlar, olusturma_tarihi)
-                    VALUES (?,?,?,?,0,0,0,?,?,?)
-                    """,
-                    (
-                        tarih,
-                        saat,
-                        danisan,
-                        terapist,
-                        seans_id,
-                        notlar or "",
-                        datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    ),
-                )
-                rid = int(cur.lastrowid or 0) or None
-            except Exception:
-                rid = None
-
-        if rid:
-            try:
-                cur.execute("UPDATE seans_takvimi SET record_id=? WHERE id=? AND (record_id IS NULL OR record_id='')", (rid, seans_id))
-            except Exception:
-                pass
-
-    def belirsizleri_duzelt_pencere(self):
-        """Teknik olmayan kullanıcı için basit 'sihirbaz' ekranı."""
-        if self.kullanici_yetki != "kurum_muduru":
-            messagebox.showwarning("Yetki", "Bu ekran sadece Kurum Müdürü tarafından kullanılabilir.")
-            return
-
-        items = []
-        try:
-            items = list(getattr(self, "_last_sync_ambiguous", []) or [])
-        except Exception:
-            items = []
-
-        if not items:
-            messagebox.showinfo("Bilgi", "Şu anda düzeltilmesi gereken belirsiz kayıt yok.")
-            return
-
-        win = ttk.Toplevel(self)
-        win.title("Belirsiz Kayıtları Düzelt")
-        win.transient(self)
-        center_window_smart(win, 1100, 750, min_w=1000, min_h=700)
-        maximize_window(win)
-        self._brand_window(win)
-
-        wrapper = ttk.Frame(win, padding=12)
-        wrapper.pack(fill=BOTH, expand=True)
-
-        head = ttk.Frame(wrapper)
-        head.pack(fill=X)
-        ttk.Label(head, text="BELİRSİZ KAYITLARI DÜZELT", font=("Segoe UI", 14, "bold"), bootstyle="warning").pack(side=LEFT, anchor=W)
-        prog_lbl = ttk.Label(head, text=f"Kalan: {len(items)}", font=("Segoe UI", 11, "bold"))
-        prog_lbl.pack(side=RIGHT)
-        ttk.Label(
-            wrapper,
-            text=(
-                "Uygulama bazen aynı gün aynı danışan için birden fazla kayıt bulduğu için otomatik eşleştirme yapamaz.\n"
-                "Aşağıdan doğru seçeneği seçip 'EŞLEŞTİR' diyerek işlemi tamamlayabilirsin."
-            ),
-            foreground="gray",
-            wraplength=940,
-        ).pack(anchor=W, pady=(6, 12))
-
-        # Sol: iş listesi
-        body = ttk.Frame(wrapper)
-        body.pack(fill=BOTH, expand=True)
-
-        left = ttk.Labelframe(body, text="Düzeltilmesi Gerekenler", padding=10)
-        left.pack(side=LEFT, fill=Y, padx=(0, 10))
-
-        lst = tk.Listbox(left, width=44, height=22)
-        lst.pack(fill=Y, expand=False)
-
-        # Sağ: detay + seçenekler
-        right = ttk.Labelframe(body, text="Detay ve Seçim", padding=10)
-        right.pack(side=LEFT, fill=BOTH, expand=True)
-
-        info = ttk.Label(right, text="", font=("Segoe UI", 11, "bold"), wraplength=580)
-        info.pack(anchor=W, pady=(0, 10))
-
-        choice_var = tk.StringVar(value="")
-        choices_box = ttk.Frame(right)
-        choices_box.pack(fill=BOTH, expand=True)
-
-        def _label_for_item(it: dict) -> str:
-            if it.get("type") == "record_missing_time":
-                return f"Seans Takip kaydı: {it.get('tarih','')} | {it.get('danisan','')} | {it.get('terapist','')}"
-            if it.get("type") == "seans_multiple_records":
-                return f"Takvim seansı: {it.get('tarih','')} {it.get('saat','')} | {it.get('danisan','')} | {it.get('terapist','')}"
-            return "Belirsiz kayıt"
-
-        for it in items:
-            lst.insert(END, _label_for_item(it))
-
-        def _clear_choices():
-            for w in choices_box.winfo_children():
-                try:
-                    w.destroy()
-                except Exception:
-                    pass
-
-        def _render(idx: int):
-            _clear_choices()
-            if idx < 0 or idx >= len(items):
-                info.configure(text="Bitti. Kalan belirsiz kayıt yok.")
-                try:
-                    prog_lbl.configure(text="Kalan: 0")
-                except Exception:
-                    pass
-                return
-            it = items[idx]
-            t = it.get("type")
-            choice_var.set("")
-            try:
-                prog_lbl.configure(text=f"Kalan: {len(items)}")
-            except Exception:
-                pass
-
-            if t == "record_missing_time":
-                info.configure(
-                    text=(
-                        "Bu Seans Takip kaydında saat yok.\n"
-                        "Takvimde aynı gün aynı danışan için birden fazla seans var.\n"
-                        "Lütfen doğru saati seç:"
-                    )
-                )
-                for c in it.get("candidates", []):
-                    sid = c.get("seans_id")
-                    saat = c.get("saat") or "(saat yok)"
-                    ttk.Radiobutton(
-                        choices_box,
-                        text=f"{saat}  (Takvim ID: {sid})",
-                        value=str(sid),
-                        variable=choice_var,
-                        bootstyle="warning",
-                    ).pack(anchor=W, pady=4)
-
-            elif t == "seans_multiple_records":
-                info.configure(
-                    text=(
-                        "Bu Takvim seansı için Seans Takip'te birden fazla aday kayıt bulundu.\n"
-                        "Lütfen doğru kaydı seç:"
-                    )
-                )
-                for c in it.get("candidates", []):
-                    rid = c.get("record_id")
-                    linked = " (zaten bağlı)" if c.get("has_link") else ""
-                    ttk.Radiobutton(
-                        choices_box,
-                        text=f"Seans Takip ID: {rid}{linked}",
-                        value=str(rid),
-                        variable=choice_var,
-                        bootstyle="warning",
-                    ).pack(anchor=W, pady=4)
-            else:
-                info.configure(text="Bu belirsiz tip tanınmadı.")
-
-        def _selected_index():
-            try:
-                sel = lst.curselection()
-                if not sel:
-                    return 0
-                return int(sel[0])
-            except Exception:
-                return 0
-
-        def _apply_choice():
-            idx = _selected_index()
-            if idx < 0 or idx >= len(items):
-                return
-            it = items[idx]
-            t = it.get("type")
-            val = (choice_var.get() or "").strip()
-            if not val:
-                messagebox.showwarning("Uyarı", "Lütfen bir seçenek seçiniz.")
-                return
-
-            conn = None
-            try:
-                conn = self.veritabani_baglan()
-                cur = conn.cursor()
-
-                if t == "record_missing_time":
-                    rid = int(it["record_id"])
-                    sid = int(val)
-                    cur.execute("SELECT tarih, COALESCE(saat,''), danisan_adi, terapist, COALESCE(notlar,'') FROM seans_takvimi WHERE id=?", (sid,))
-                    row = cur.fetchone()
-                    if not row:
-                        messagebox.showerror("Hata", "Seçtiğiniz takvim seansı bulunamadı.")
-                        return
-                    _, saat, _, _, _ = row[0], row[1], row[2], row[3], row[4]
-                    # bağla + saat doldur
-                    cur.execute("UPDATE records SET seans_id=?, saat=? WHERE id=?", (sid, saat, rid))
-                    cur.execute("UPDATE seans_takvimi SET record_id=? WHERE id=?", (rid, sid))
-
-                elif t == "seans_multiple_records":
-                    sid = int(it["seans_id"])
-                    rid = int(val)
-                    # bağla
-                    cur.execute("UPDATE seans_takvimi SET record_id=? WHERE id=?", (rid, sid))
-                    cur.execute("UPDATE records SET seans_id=? WHERE id=?", (sid, rid))
-
-                conn.commit()
-            except Exception as e:
-                messagebox.showerror("Hata", f"Eşleştirme yapılamadı:\n{e}")
-                return
-            finally:
-                try:
-                    if conn is not None:
-                        conn.close()
-                except Exception:
-                    pass
-
-            # listeden çıkar, sıradakine geç
-            try:
-                lst.delete(idx)
-            except Exception:
-                pass
-            try:
-                items.pop(idx)
-            except Exception:
-                pass
-            try:
-                self._last_sync_ambiguous = items
-            except Exception:
-                pass
-            try:
-                self.kayitlari_listele()
-                self._refresh_borc_tables()
-            except Exception:
-                pass
-            self._update_sync_badge()
-            if items:
-                try:
-                    lst.selection_clear(0, END)
-                    lst.selection_set(min(idx, len(items) - 1))
-                except Exception:
-                    pass
-                _render(_selected_index())
-            else:
-                win.destroy()
-                messagebox.showinfo("Bitti", "Tüm belirsiz kayıtlar düzeltildi.")
-
-        def _skip():
-            idx = _selected_index()
-            if idx < 0 or idx >= len(items):
-                return
-            # sadece listeden kaldır; DB'ye dokunma
-            try:
-                lst.delete(idx)
-            except Exception:
-                pass
-            try:
-                items.pop(idx)
-            except Exception:
-                pass
-            try:
-                self._last_sync_ambiguous = items
-            except Exception:
-                pass
-            self._update_sync_badge()
-            if items:
-                try:
-                    lst.selection_clear(0, END)
-                    lst.selection_set(min(idx, len(items) - 1))
-                except Exception:
-                    pass
-                _render(_selected_index())
-            else:
-                win.destroy()
-                messagebox.showinfo("Bitti", "Belirsiz kayıt kalmadı.")
-
-        btns = ttk.Frame(right)
-        btns.pack(fill=X, pady=(10, 0))
-        ttk.Button(btns, text="EŞLEŞTİR (SEÇİLİ OLANI)", bootstyle="success", command=_apply_choice).pack(side=LEFT, fill=X, expand=True, padx=6)
-        ttk.Button(btns, text="ŞİMDİLİK ATLA", bootstyle="secondary", command=_skip).pack(side=LEFT, fill=X, expand=True, padx=6)
-        ttk.Button(btns, text="KAPAT", bootstyle="danger", command=win.destroy).pack(side=LEFT, fill=X, expand=True, padx=6)
-
-        def _on_select(_evt=None):
-            _render(_selected_index())
-
-        lst.bind("<<ListboxSelect>>", _on_select)
-        try:
-            lst.selection_set(0)
-        except Exception:
-            pass
-        _render(0)
-        self._update_sync_badge()
-
-    def senkronize_takvim_seanslar(self):
-        """Toplu senkronizasyon: records <-> seans_takvimi.
-        - Net eşleşme varsa bağlar (tarih+saat+danışan+terapist)
-        - Saat eksikse tekil eşleşme varsa bağlar ve records.saat'i doldurur
-        - Bulunamazsa eksik tarafta kayıt oluşturur
-        """
-        if self.kullanici_yetki != "kurum_muduru":
-            messagebox.showwarning("Yetki", "Toplu senkronizasyon sadece Kurum Müdürü tarafından yapılabilir.")
-            return
-        if not messagebox.askyesno(
-            "Onay",
-            "Takvim ve Seans Takip kayıtları senkronize edilecek.\n\n"
-            "Bu işlem:\n"
-            "- Eşleşenleri bağlar\n"
-            "- Eksik tarafta kayıt oluşturabilir\n\n"
-            "Devam edilsin mi?",
-        ):
-            return
-
-        stats = {
-            "linked_records": 0,
-            "created_seans": 0,
-            "linked_seans": 0,
-            "created_records": 0,
-            "skipped_ambiguous": 0,
-        }
-        ambiguous: list[dict] = []
-
-        try:
-            conn = self.veritabani_baglan()
-            cur = conn.cursor()
-
-            # 1) records tarafı: seans_id yoksa bağla/oluştur
-            cur.execute(
-                """
-                SELECT id, tarih, COALESCE(saat,''), danisan_adi, terapist, COALESCE(notlar,'')
-                FROM records
-                WHERE seans_id IS NULL OR seans_id=''
-                ORDER BY id ASC
-                """
-            )
-            rec_rows = cur.fetchall() or []
-
-            for rid, tarih, saat, danisan, terapist, notlar in rec_rows:
-                rid = int(rid)
-                tarih = (tarih or "").strip()
-                saat = (saat or "").strip()
-                danisan = (danisan or "").strip().upper()
-                terapist = (terapist or "").strip()
-                notlar = (notlar or "").strip()
-
-                # 1a) önce tam eşleşme
-                sid = None
-                if saat:
-                    cur.execute(
-                        """
-                        SELECT id, COALESCE(record_id,NULL) FROM seans_takvimi
-                        WHERE tarih=? AND saat=? AND danisan_adi=? AND terapist=?
-                        ORDER BY id DESC LIMIT 1
-                        """,
-                        (tarih, saat, danisan, terapist),
-                    )
-                    row = cur.fetchone()
-                    if row and row[0]:
-                        sid = int(row[0])
-                else:
-                    # 1b) saat yoksa: tekil eşleşme varsa bağla + saat doldur
-                    cur.execute(
-                        """
-                        SELECT id, saat, COALESCE(record_id,NULL) FROM seans_takvimi
-                        WHERE tarih=? AND danisan_adi=? AND terapist=?
-                        ORDER BY id DESC
-                        """,
-                        (tarih, danisan, terapist),
-                    )
-                    cands = cur.fetchall() or []
-                    # sadece tek aday varsa güvenli
-                    if len(cands) == 1:
-                        sid = int(cands[0][0])
-                        saat = (cands[0][1] or "").strip()
-                        if saat:
-                            cur.execute("UPDATE records SET saat=? WHERE id=? AND (saat IS NULL OR saat='')", (saat, rid))
-                    elif len(cands) > 1:
-                        stats["skipped_ambiguous"] += 1
-                        try:
-                            ambiguous.append(
-                                {
-                                    "type": "record_missing_time",
-                                    "record_id": rid,
-                                    "tarih": tarih,
-                                    "danisan": danisan,
-                                    "terapist": terapist,
-                                    "candidates": [{"seans_id": int(x[0]), "saat": (x[1] or "").strip()} for x in cands],
-                                }
-                            )
-                        except Exception:
-                            pass
-
-                if sid:
-                    # bağla
-                    cur.execute("UPDATE records SET seans_id=? WHERE id=? AND (seans_id IS NULL OR seans_id='')", (sid, rid))
-                    cur.execute("UPDATE seans_takvimi SET record_id=? WHERE id=? AND (record_id IS NULL OR record_id='')", (rid, sid))
-                    stats["linked_records"] += 1
-                    continue
-
-                # 1c) yoksa seans oluştur
-                use_saat = saat or self._default_saat()
-                cur.execute(
-                    """
-                    INSERT INTO seans_takvimi (tarih, saat, danisan_adi, terapist, oda, durum, notlar, olusturma_tarihi, olusturan_kullanici_id, record_id)
-                    VALUES (?,?,?,?,?,?,?,?,?,?)
-                    """,
-                    (
-                        tarih,
-                        use_saat,
-                        danisan,
-                        terapist,
-                        "",
-                        "planlandi",
-                        notlar,
-                        datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        (self.kullanici[0] if self.kullanici else None),
-                        rid,
-                    ),
-                )
-                sid = int(cur.lastrowid or 0)
-                cur.execute("UPDATE records SET seans_id=?, saat=? WHERE id=?", (sid, use_saat, rid))
-                stats["created_seans"] += 1
-
-            # 2) seans_takvimi tarafı: record_id yoksa bağla/oluştur
-            cur.execute(
-                """
-                SELECT id, tarih, saat, danisan_adi, terapist, COALESCE(notlar,'')
-                FROM seans_takvimi
-                WHERE record_id IS NULL OR record_id=''
-                ORDER BY id ASC
-                """
-            )
-            seans_rows = cur.fetchall() or []
-
-            for sid, tarih, saat, danisan, terapist, notlar in seans_rows:
-                sid = int(sid)
-                tarih = (tarih or "").strip()
-                saat = (saat or "").strip()
-                danisan = (danisan or "").strip().upper()
-                terapist = (terapist or "").strip()
-                notlar = (notlar or "").strip()
-
-                cur.execute(
-                    """
-                    SELECT id, COALESCE(seans_id,NULL) FROM records
-                    WHERE tarih=? AND COALESCE(saat,'')=? AND danisan_adi=? AND terapist=?
-                    ORDER BY id DESC
-                    """,
-                    (tarih, saat, danisan, terapist),
-                )
-                cands = cur.fetchall() or []
-                # Eğer birden fazla aday varsa yanlış bağlamamak için kullanıcıya soralım
-                if len(cands) > 1:
-                    stats["skipped_ambiguous"] += 1
-                    try:
-                        ambiguous.append(
-                            {
-                                "type": "seans_multiple_records",
-                                "seans_id": sid,
-                                "tarih": tarih,
-                                "saat": saat,
-                                "danisan": danisan,
-                                "terapist": terapist,
-                                "candidates": [{"record_id": int(x[0]), "has_link": bool(x[1])} for x in cands],
-                            }
-                        )
-                    except Exception:
-                        pass
-                    continue
-
-                rid = None
-                if cands:
-                    rid = int(cands[0][0])
-
-                if rid:
-                    cur.execute("UPDATE seans_takvimi SET record_id=? WHERE id=? AND (record_id IS NULL OR record_id='')", (rid, sid))
-                    cur.execute("UPDATE records SET seans_id=? WHERE id=? AND (seans_id IS NULL OR seans_id='')", (sid, rid))
-                    stats["linked_seans"] += 1
-                    continue
-
-                # yoksa record oluştur
-                cur.execute(
-                    """
-                    INSERT INTO records (tarih, saat, danisan_adi, terapist, hizmet_bedeli, alinan_ucret, kalan_borc, notlar, olusturma_tarihi, seans_id)
-                    VALUES (?,?,?,?,0,0,0,?,?,?)
-                    """,
-                    (
-                        tarih,
-                        saat,
-                        danisan,
-                        terapist,
-                        notlar,
-                        datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        sid,
-                    ),
-                )
-                rid = int(cur.lastrowid or 0)
-                cur.execute("UPDATE seans_takvimi SET record_id=? WHERE id=?", (rid, sid))
-                stats["created_records"] += 1
-
-            # 3) Haftalık programa eksik seansları ekle (seans_takvimi'ndeki her kayıt haftalık programda görünsün)
-            GUNLER = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
-            cur.execute(
-                "SELECT id, tarih, saat, danisan_adi, terapist, COALESCE(notlar,''), COALESCE(oda,'') FROM seans_takvimi"
-            )
-            for row in cur.fetchall() or []:
-                try:
-                    sid, tarih_s, saat_s, danisan_s, terapist_s, notlar_s, oda_s = row
-                    if not tarih_s or not terapist_s:
-                        continue
-                    dt = datetime.datetime.strptime(tarih_s.strip()[:10], "%Y-%m-%d")
-                    weekday = dt.weekday()
-                    monday = dt - datetime.timedelta(days=weekday)
-                    hafta_bas = monday.strftime("%Y-%m-%d")
-                    gun = GUNLER[weekday]
-                    saat_norm = (saat_s or "").strip() or "09:00"
-                    if len(saat_norm) <= 2 and saat_norm.isdigit():
-                        saat_norm = f"{int(saat_norm):02d}:00"
-                    olusturma = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    cur.execute(
-                        """
-                        INSERT OR REPLACE INTO haftalik_seans_programi
-                        (personel_adi, hafta_baslangic_tarihi, gun, saat, ogrenci_adi, oda_adi, notlar, olusturma_tarihi, guncelleme_tarihi, olusturan_kullanici_id)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (terapist_s.strip(), hafta_bas, gun, saat_norm, (danisan_s or "").strip(), (oda_s or "").strip(), (notlar_s or "").strip(), olusturma, olusturma, (self.kullanici[0] if self.kullanici else None)),
-                    )
-                except Exception:
-                    pass
-
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-            try:
-                conn.close()
-            except Exception:
-                pass
-            messagebox.showerror("Hata", f"Senkronizasyon hatası:\n{e}")
-            return
-
-        # UI tazele: Seans listesi + borç tabloları + Haftalık program (Windows/macOS)
-        try:
-            self.kayitlari_listele()
-            self._refresh_borc_tables()
-        except Exception:
-            pass
-        try:
-            for child in self.tab_haftalik.winfo_children():
-                if getattr(child, "_program_table", None):
-                    self._haftalik_program_yukle(child)
-                    break
-        except Exception:
-            pass
-
-        # belirsiz listesi sakla (butondan tekrar açılabilsin)
-        try:
-            self._last_sync_ambiguous = ambiguous
-        except Exception:
-            pass
-        self._update_sync_badge()
-
-        messagebox.showinfo(
-            "Senkronizasyon Tamam",
-            "Özet:\n"
-            f"- Bağlanan kayıtlar (records→seans): {stats['linked_records']}\n"
-            f"- Oluşturulan seans (records→seans): {stats['created_seans']}\n"
-            f"- Bağlanan seans (seans→records): {stats['linked_seans']}\n"
-            f"- Oluşturulan kayıt (seans→records): {stats['created_records']}\n"
-            f"- Belirsiz olduğu için atlanan: {stats['skipped_ambiguous']}\n\n"
-            "Not: Belirsiz olanları istersen 'Belirsizleri Düzelt' ekranından tek tek seçerek tamamlayabilirsin.",
-        )
-
-        if ambiguous:
-            if messagebox.askyesno(
-                "Belirsiz Kayıtlar Var",
-                f"{len(ambiguous)} adet belirsiz kayıt bulundu.\n\n"
-                "Şimdi düzeltme ekranı açılsın mı?\n"
-                "(İstersen sonra da 'Belirsizleri Düzelt' butonundan açabilirsin.)",
-            ):
-                self.belirsizleri_duzelt_pencere()
-
-    def _range_summary(self, bas: str, bit: str, terapist: str | None = None) -> dict:
-        """Kasa + seans özetini döndür."""
-        out = {
-            "seans_sayisi": 0,
-            "bedel_toplam": 0.0,
-            "alinan_toplam": 0.0,
-            "kalan_toplam": 0.0,
-            "kasa_giren": 0.0,
-            "kasa_cikan": 0.0,
-        }
-        try:
-            conn = self.veritabani_baglan()
-            cur = conn.cursor()
-
-            if terapist:
-                cur.execute(
-                    """
-                    SELECT COUNT(*),
-                           COALESCE(SUM(hizmet_bedeli),0),
-                           COALESCE(SUM(alinan_ucret),0),
-                           COALESCE(SUM(kalan_borc),0)
-                    FROM records
-                    WHERE tarih>=? AND tarih<=? AND terapist=?
-                    """,
-                    (bas, bit, terapist),
-                )
-            else:
-                cur.execute(
-                    """
-                    SELECT COUNT(*),
-                           COALESCE(SUM(hizmet_bedeli),0),
-                           COALESCE(SUM(alinan_ucret),0),
-                           COALESCE(SUM(kalan_borc),0)
-                    FROM records
-                    WHERE tarih>=? AND tarih<=?
-                    """,
-                    (bas, bit),
-                )
-            c, b, a, k = cur.fetchone() or (0, 0, 0, 0)
-            out["seans_sayisi"] = int(c or 0)
-            out["bedel_toplam"] = float(b or 0)
-            out["alinan_toplam"] = float(a or 0)
-            out["kalan_toplam"] = float(k or 0)
-
-            if terapist:
-                cur.execute(
-                    """
-                    SELECT
-                        COALESCE(SUM(CASE WHEN kh.tip='giren' THEN kh.tutar ELSE 0 END),0),
-                        COALESCE(SUM(CASE WHEN kh.tip='cikan' THEN kh.tutar ELSE 0 END),0)
-                    FROM kasa_hareketleri kh
-                    LEFT JOIN records r ON r.id = kh.record_id
-                    WHERE kh.tarih>=? AND kh.tarih<=? AND r.terapist=?
-                    """,
-                    (bas, bit, terapist),
-                )
-            else:
-                cur.execute(
-                    """
-                    SELECT
-                        COALESCE(SUM(CASE WHEN tip='giren' THEN tutar ELSE 0 END),0),
-                        COALESCE(SUM(CASE WHEN tip='cikan' THEN tutar ELSE 0 END),0)
-                    FROM kasa_hareketleri
-                    WHERE tarih>=? AND tarih<=?
-                    """,
-                    (bas, bit),
-                )
-            g, ckn = cur.fetchone() or (0, 0)
-            out["kasa_giren"] = float(g or 0)
-            out["kasa_cikan"] = float(ckn or 0)
-            conn.close()
-        except Exception:
-            pass
-        return out
-
-    def gunluk_rapor_pencere(self):
-        # SEANS TAKİP ekranındaki tarih alanını baz al
-        try:
-            s = (self.tarih_var.get() or "").strip()
-        except Exception:
-            s = ""
-        gun = self._tarih_db_from(s)
-        self._rapor_pencere(gun, gun, title="Günlük Rapor")
-
-    def haftalik_rapor_pencere(self):
-        # SEANS TAKİP tarihine göre haftayı seç
-        try:
-            s = (self.tarih_var.get() or "").strip()
-        except Exception:
-            s = ""
-        d = datetime.datetime.strptime(self._tarih_db_from(s), "%Y-%m-%d")
-        bas = d - datetime.timedelta(days=d.weekday())
-        bit = bas + datetime.timedelta(days=6)
-        self._rapor_pencere(bas.strftime("%Y-%m-%d"), bit.strftime("%Y-%m-%d"), title="Haftalık Rapor")
-    
-    def senkronizasyon_kontrol_pencere(self):
-        """Genel senkronizasyon kontrolü - Tüm tablolar arası tutarlılık"""
-        win = ttk.Toplevel(self)
-        win.title("Senkronizasyon Kontrolü")
-        win.transient(self)
-        center_window_smart(win, 1000, 700, min_w=900, min_h=650)
-        maximize_window(win)
-        self._brand_window(win)
-        
-        top = ttk.Frame(win, padding=10)
-        top.pack(fill=X)
-        ttk.Label(top, text="🔍 GENEL SENKRONİZASYON KONTROLÜ", font=("Segoe UI", 14, "bold"), bootstyle="info").pack(side=LEFT)
-        
-        # Kontrol butonu
-        def _kontrol_et():
-            conn = None
-            try:
-                conn = self.veritabani_baglan()
-                kullanici_id = self.kullanici[0] if self.kullanici else None
-                pipeline = DataPipeline(conn, kullanici_id)
-                result = pipeline.validate_sync()
-                
-                # Sonuçları göster
-                for iid in tree.get_children():
-                    tree.delete(iid)
-                
-                # İstatistikler
-                stats = result["stats"]
-                tree.insert("", END, values=("📊 İSTATİSTİKLER", "", ""), tags=("header",))
-                tree.insert("", END, values=("Seans Takvimi", str(stats["seans_takvimi_count"]), ""))
-                tree.insert("", END, values=("Records", str(stats["records_count"]), ""))
-                tree.insert("", END, values=("Danışanlar", str(stats["danisanlar_count"]), ""))
-                tree.insert("", END, values=("Odalar", str(stats["odalar_count"]), ""))
-                tree.insert("", END, values=("Kasa Hareketleri", str(stats["kasa_hareketleri_count"]), ""))
-                tree.insert("", END, values=("Ödeme Hareketleri", str(stats["odeme_hareketleri_count"]), ""))
-                
-                # Hatalar
-                if result["errors"]:
-                    tree.insert("", END, values=("", "", ""))
-                    tree.insert("", END, values=("❌ HATALAR", "", ""), tags=("error",))
-                    for err in result["errors"]:
-                        tree.insert("", END, values=("", err, ""), tags=("error",))
-                
-                # Uyarılar
-                missing_danisanlar_list.clear()
-                if result["warnings"]:
-                    tree.insert("", END, values=("", "", ""))
-                    tree.insert("", END, values=("⚠️ UYARILAR", "", ""), tags=("warning",))
-                    for warn in result["warnings"]:
-                        tree.insert("", END, values=("", warn, ""), tags=("warning",))
-                
-                # Eksik danışanları al (validate_sync'den direkt)
-                if "missing_danisanlar" in result:
-                    missing_danisanlar_list.extend(result["missing_danisanlar"])
-                
-                # Eksik danışanlar varsa butonu aktif et
-                if missing_danisanlar_list:
-                    btn_ekle.config(state="normal")
-                else:
-                    btn_ekle.config(state="disabled")
-                
-                # Durum
-                if result["ok"]:
-                    durum_lbl.config(text="✅ Tüm senkronizasyonlar OK!", bootstyle="success")
-                else:
-                    durum_lbl.config(text=f"❌ {len(result['errors'])} hata bulundu!", bootstyle="danger")
-                    
-            except Exception as e:
-                messagebox.showerror("Hata", f"Senkronizasyon kontrolü hatası:\n{e}")
-                log_exception("senkronizasyon_kontrol", e)
-            finally:
-                try:
-                    if conn is not None:
-                        conn.close()
-                except Exception:
-                    pass
-        
-        # Eksik danışanları otomatik ekle
-        missing_danisanlar_list = []
-        
-        def _eksik_danisanlari_ekle():
-            if not missing_danisanlar_list:
-                messagebox.showinfo("Bilgi", "Eklenecek danışan bulunamadı.")
-                return
-            conn = None
-            try:
-                conn = self.veritabani_baglan()
-                kullanici_id = self.kullanici[0] if self.kullanici else None
-                pipeline = DataPipeline(conn, kullanici_id)
-                
-                eklenen = 0
-                for danisan_adi in missing_danisanlar_list:
-                    pipeline._ensure_danisan_exists(danisan_adi)
-                    eklenen += 1
-                
-                conn.commit()
-                
-                messagebox.showinfo("Başarılı", f"{eklenen} danışan otomatik olarak eklendi!\n\nLütfen kontrolü tekrar çalıştırın.")
-                _kontrol_et()
-                
-            except Exception as e:
-                messagebox.showerror("Hata", f"Danışan ekleme hatası:\n{e}")
-                log_exception("eksik_danisan_ekle", e)
-            finally:
-                try:
-                    if conn is not None:
-                        conn.close()
-                except Exception:
-                    pass
-        
-        btn_frame = ttk.Frame(win, padding=10)
-        btn_frame.pack(fill=X)
-        ttk.Button(btn_frame, text="🔍 Kontrol Et", bootstyle="info", command=_kontrol_et).pack(side=LEFT, padx=6)
-        btn_ekle = ttk.Button(btn_frame, text="➕ Eksik Danışanları Ekle", bootstyle="success", command=_eksik_danisanlari_ekle, state="disabled")
-        btn_ekle.pack(side=LEFT, padx=6)
-        durum_lbl = ttk.Label(btn_frame, text="Kontrol edilmeyi bekliyor...", font=("Segoe UI", 10, "bold"))
-        durum_lbl.pack(side=LEFT, padx=20)
-        
-        # Sonuçlar
-        frame = ttk.Frame(win, padding=10)
-        frame.pack(fill=BOTH, expand=True)
-        cols = ("Kategori", "Detay", "Durum")
-        tree = ttk.Treeview(frame, columns=cols, show="headings", height=20)
-        for c in cols:
-            tree.heading(c, text=c)
-            tree.column(c, width=300)
-        tree.pack(side=LEFT, fill=BOTH, expand=True)
-        sb = ttk.Scrollbar(frame, orient=VERTICAL, command=tree.yview)
-        tree.configure(yscroll=sb.set)
-        sb.pack(side=RIGHT, fill=Y)
-        
-        tree.tag_configure("header", background="#e9ecef", font=("Segoe UI", 10, "bold"))
-        tree.tag_configure("error", foreground="#dc3545")
-        tree.tag_configure("warning", foreground="#ffc107")
-        
-        # İlk kontrolü otomatik yap
-        _kontrol_et()
 
     def toplam_rapor_pencere(self):
         self._rapor_pencere("0001-01-01", "9999-12-31", title="Toplam Rapor (Genel)")
@@ -1754,42 +817,20 @@ class App(ttk.Window):
                         """
                         SELECT * FROM (
                             SELECT
-                                'seans' AS kaynak_tip,
+                                CASE WHEN st.durum='devir_borc' THEN 'eski_borc' ELSE 'seans' END AS kaynak_tip,
                                 st.id AS kaynak_id,
-                                st.id AS seans_id,
+                                CASE WHEN st.durum='devir_borc' THEN 0 ELSE st.id END AS seans_id,
                                 st.tarih AS tarih,
                                 COALESCE(st.saat, '') AS saat,
-                                COALESCE(r.danisan_adi, st.danisan_adi, '') AS danisan_adi,
-                                COALESCE(r.terapist, st.terapist, '') AS terapist,
-                                COALESCE(r.hizmet_bedeli, 0) AS seans_ucreti,
-                                COALESCE(r.alinan_ucret, 0) AS alinan_odeme,
-                                COALESCE(r.kalan_borc, 0) AS kalan_borc,
-                                COALESCE(r.notlar, st.notlar, '') AS notlar
+                                COALESCE(st.danisan_adi, '') AS danisan_adi,
+                                COALESCE(st.terapist, '') AS terapist,
+                                COALESCE(st.hizmet_bedeli, 0) AS seans_ucreti,
+                                COALESCE(st.alinan_ucret, 0) AS alinan_odeme,
+                                COALESCE(st.kalan_borc, 0) AS kalan_borc,
+                                CASE WHEN st.durum='devir_borc' THEN ('Eski Borç | ' || COALESCE(st.notlar,'')) ELSE COALESCE(st.notlar, '') END AS notlar
                             FROM seans_takvimi st
-                            LEFT JOIN records r ON r.id = st.record_id OR r.seans_id = st.id
                             WHERE st.tarih>=? AND st.tarih<=?
-
-                            UNION ALL
-
-                            SELECT
-                                'eski_borc' AS kaynak_tip,
-                                r.id AS kaynak_id,
-                                0 AS seans_id,
-                                COALESCE(r.tarih,'') AS tarih,
-                                '' AS saat,
-                                COALESCE(r.danisan_adi,'') AS danisan_adi,
-                                COALESCE(r.terapist,'') AS terapist,
-                                COALESCE(r.hizmet_bedeli,0) AS seans_ucreti,
-                                COALESCE(r.alinan_ucret,0) AS alinan_odeme,
-                                CASE WHEN COALESCE(r.kalan_borc,0)>0 THEN COALESCE(r.kalan_borc,0)
-                                     ELSE MAX(0, COALESCE(r.hizmet_bedeli,0)-COALESCE(r.alinan_ucret,0)) END AS kalan_borc,
-                                ('Eski Borç | ' || COALESCE(r.notlar,'')) AS notlar
-                            FROM records r
-                            LEFT JOIN seans_takvimi st2 ON st2.record_id = r.id
-                            WHERE COALESCE(r.tarih,'')>=? AND COALESCE(r.tarih,'')<=?
-                              AND COALESCE(r.seans_id,0)=0 AND st2.id IS NULL
-                              AND (CASE WHEN COALESCE(r.kalan_borc,0)>0 THEN COALESCE(r.kalan_borc,0)
-                                        ELSE MAX(0, COALESCE(r.hizmet_bedeli,0)-COALESCE(r.alinan_ucret,0)) END) > 0
+                              AND (st.durum != 'devir_borc' OR COALESCE(st.kalan_borc,0) > 0)
 
                             UNION ALL
 
@@ -1799,14 +840,14 @@ class App(ttk.Window):
                                 0 AS seans_id,
                                 COALESCE(k.tarih,'') AS tarih,
                                 '' AS saat,
-                                COALESCE(r.danisan_adi, TRIM(SUBSTR(COALESCE(k.aciklama,''), INSTR(COALESCE(k.aciklama,''), ':')+1)), '') AS danisan_adi,
-                                COALESCE(r.terapist, '') AS terapist,
+                                COALESCE(st.danisan_adi, TRIM(SUBSTR(COALESCE(k.aciklama,''), INSTR(COALESCE(k.aciklama,''), ':')+1)), '') AS danisan_adi,
+                                COALESCE(st.terapist, '') AS terapist,
                                 0 AS seans_ucreti,
                                 COALESCE(k.tutar,0) AS alinan_odeme,
                                 0 AS kalan_borc,
                                 ('Toplu Ödeme | ' || COALESCE(k.aciklama,'')) AS notlar
                             FROM kasa_hareketleri k
-                            LEFT JOIN records r ON r.id = k.record_id
+                            LEFT JOIN seans_takvimi st ON st.id = k.seans_id
                             WHERE COALESCE(k.tarih,'')>=? AND COALESCE(k.tarih,'')<=?
                               AND LOWER(COALESCE(k.tip,'')) IN ('giren','gelir','in')
                               AND (LOWER(COALESCE(k.aciklama,'')) LIKE '%toplu%'
@@ -1815,50 +856,27 @@ class App(ttk.Window):
                         ) q
                         ORDER BY q.tarih, q.saat, q.kaynak_id
                         """,
-                        conn, params=(bas, bit, bas, bit, bas, bit)
+                        conn, params=(bas, bit, bas, bit)
                     )
                 else:
                     df = pd.read_sql_query(
                         """
                         SELECT * FROM (
                             SELECT
-                                'seans' AS kaynak_tip,
+                                CASE WHEN st.durum='devir_borc' THEN 'eski_borc' ELSE 'seans' END AS kaynak_tip,
                                 st.id AS kaynak_id,
-                                st.id AS seans_id,
+                                CASE WHEN st.durum='devir_borc' THEN 0 ELSE st.id END AS seans_id,
                                 st.tarih AS tarih,
                                 COALESCE(st.saat, '') AS saat,
-                                COALESCE(r.danisan_adi, st.danisan_adi, '') AS danisan_adi,
-                                COALESCE(r.terapist, st.terapist, '') AS terapist,
-                                COALESCE(r.hizmet_bedeli, 0) AS seans_ucreti,
-                                COALESCE(r.alinan_ucret, 0) AS alinan_odeme,
-                                COALESCE(r.kalan_borc, 0) AS kalan_borc,
-                                COALESCE(r.notlar, st.notlar, '') AS notlar
+                                COALESCE(st.danisan_adi, '') AS danisan_adi,
+                                COALESCE(st.terapist, '') AS terapist,
+                                COALESCE(st.hizmet_bedeli, 0) AS seans_ucreti,
+                                COALESCE(st.alinan_ucret, 0) AS alinan_odeme,
+                                COALESCE(st.kalan_borc, 0) AS kalan_borc,
+                                CASE WHEN st.durum='devir_borc' THEN ('Eski Borç | ' || COALESCE(st.notlar,'')) ELSE COALESCE(st.notlar, '') END AS notlar
                             FROM seans_takvimi st
-                            LEFT JOIN records r ON r.id = st.record_id OR r.seans_id = st.id
-                            WHERE st.tarih>=? AND st.tarih<=? AND COALESCE(r.terapist, st.terapist, '')=?
-
-                            UNION ALL
-
-                            SELECT
-                                'eski_borc' AS kaynak_tip,
-                                r.id AS kaynak_id,
-                                0 AS seans_id,
-                                COALESCE(r.tarih,'') AS tarih,
-                                '' AS saat,
-                                COALESCE(r.danisan_adi,'') AS danisan_adi,
-                                COALESCE(r.terapist,'') AS terapist,
-                                COALESCE(r.hizmet_bedeli,0) AS seans_ucreti,
-                                COALESCE(r.alinan_ucret,0) AS alinan_odeme,
-                                CASE WHEN COALESCE(r.kalan_borc,0)>0 THEN COALESCE(r.kalan_borc,0)
-                                     ELSE MAX(0, COALESCE(r.hizmet_bedeli,0)-COALESCE(r.alinan_ucret,0)) END AS kalan_borc,
-                                ('Eski Borç | ' || COALESCE(r.notlar,'')) AS notlar
-                            FROM records r
-                            LEFT JOIN seans_takvimi st2 ON st2.record_id = r.id
-                            WHERE COALESCE(r.tarih,'')>=? AND COALESCE(r.tarih,'')<=?
-                              AND COALESCE(r.seans_id,0)=0 AND st2.id IS NULL
-                              AND COALESCE(r.terapist,'')=?
-                              AND (CASE WHEN COALESCE(r.kalan_borc,0)>0 THEN COALESCE(r.kalan_borc,0)
-                                        ELSE MAX(0, COALESCE(r.hizmet_bedeli,0)-COALESCE(r.alinan_ucret,0)) END) > 0
+                            WHERE st.tarih>=? AND st.tarih<=? AND COALESCE(st.terapist, '')=?
+                              AND (st.durum != 'devir_borc' OR COALESCE(st.kalan_borc,0) > 0)
 
                             UNION ALL
 
@@ -1868,16 +886,16 @@ class App(ttk.Window):
                                 0 AS seans_id,
                                 COALESCE(k.tarih,'') AS tarih,
                                 '' AS saat,
-                                COALESCE(r.danisan_adi, TRIM(SUBSTR(COALESCE(k.aciklama,''), INSTR(COALESCE(k.aciklama,''), ':')+1)), '') AS danisan_adi,
-                                COALESCE(r.terapist, '') AS terapist,
+                                COALESCE(st.danisan_adi, TRIM(SUBSTR(COALESCE(k.aciklama,''), INSTR(COALESCE(k.aciklama,''), ':')+1)), '') AS danisan_adi,
+                                COALESCE(st.terapist, '') AS terapist,
                                 0 AS seans_ucreti,
                                 COALESCE(k.tutar,0) AS alinan_odeme,
                                 0 AS kalan_borc,
                                 ('Toplu Ödeme | ' || COALESCE(k.aciklama,'')) AS notlar
                             FROM kasa_hareketleri k
-                            LEFT JOIN records r ON r.id = k.record_id
+                            LEFT JOIN seans_takvimi st ON st.id = k.seans_id
                             WHERE COALESCE(k.tarih,'')>=? AND COALESCE(k.tarih,'')<=?
-                              AND COALESCE(r.terapist,'')=?
+                              AND COALESCE(st.terapist,'')=?
                               AND LOWER(COALESCE(k.tip,'')) IN ('giren','gelir','in')
                               AND (LOWER(COALESCE(k.aciklama,'')) LIKE '%toplu%'
                                    OR LOWER(COALESCE(k.aciklama,'')) LIKE '%peşinat%'
@@ -1885,7 +903,7 @@ class App(ttk.Window):
                         ) q
                         ORDER BY q.tarih, q.saat, q.kaynak_id
                         """,
-                        conn, params=(bas, bit, self.kullanici_terapist, bas, bit, self.kullanici_terapist, bas, bit, self.kullanici_terapist)
+                        conn, params=(bas, bit, self.kullanici_terapist, bas, bit, self.kullanici_terapist)
                     )
             except Exception as e:
                 log_exception("_rapor_pencere_records", e)
@@ -1918,7 +936,7 @@ class App(ttk.Window):
                     WHERE tarih>=? AND tarih<=?
                 """
                 if self.kullanici_yetki != "kurum_muduru" and self.kullanici_terapist:
-                    sql += " AND (record_id IN (SELECT id FROM records WHERE terapist=?))"
+                    sql += " AND (seans_id IN (SELECT id FROM seans_takvimi WHERE terapist=?))"
                     params.append(self.kullanici_terapist)
                 sql += " ORDER BY tarih, id"
                 df = pd.read_sql_query(sql, conn, params=tuple(params))
@@ -2805,7 +1823,7 @@ class App(ttk.Window):
         hedef_ids = ids[:1] if mod == "tek" else ids
         if not messagebox.askyesno(
             "Onay",
-            f"{len(hedef_ids)} adet kayıt silinecek.\n\nİlgili tüm veriler (seans takvimi, records, ödemeler, kasa kayıtları) silinecektir!\n\nDevam etmek istiyor musunuz?"
+            f"{len(hedef_ids)} adet kayıt silinecek.\n\nİlgili tüm veriler (seans takvimi, ödemeler, kasa kayıtları) silinecektir!\n\nDevam etmek istiyor musunuz?"
         ):
             return
 
@@ -3309,7 +2327,7 @@ class App(ttk.Window):
                     conn_sync = self.veritabani_baglan()
                     cur_sync = conn_sync.cursor()
                     cur_sync.execute(
-                        "UPDATE danisanlar SET balance = (SELECT COALESCE(SUM(kalan_borc), 0) FROM records WHERE danisan_adi=?) WHERE ad_soyad=?",
+                        "UPDATE danisanlar SET balance = (SELECT COALESCE(SUM(kalan_borc), 0) FROM seans_takvimi WHERE danisan_adi=?) WHERE ad_soyad=?",
                         (danisan, danisan)
                     )
                     conn_sync.commit()
@@ -3392,7 +2410,7 @@ class App(ttk.Window):
     def kayitlari_listele(self):
         """
         Seans Takip listesi - SEANS_TAKVIMI ANA KAYNAK
-        seans_takvimi tablosundan okuyup records ile JOIN yaparak tüm bilgileri gösterir.
+        seans_takvimi tablosundan doğrudan okur (records konsolide edildi).
         """
         for iid in self.tree.get_children():
             self.tree.delete(iid)
@@ -3401,9 +2419,12 @@ class App(ttk.Window):
         try:
             conn = self.veritabani_baglan()
             cur = conn.cursor()
-            where = []
+            # 'devir_borc' kayitlari (eski_borc_ekle ile girilen, gercek bir
+            # seans olmayan acilis bakiyeleri) bu listeye dahil edilmez - onlar
+            # Eski Borc ekranlarinda (popup_eski_borc/popup_eski_borc_sil) yönetilir.
+            where = ["COALESCE(st.durum,'') != 'devir_borc'"]
             params = []
-            
+
             # Role göre filtre (eğitim görevlisi sadece kendi kayıtlarını görür)
             if self.kullanici_yetki != "kurum_muduru" and self.kullanici_terapist:
                 where.append("st.terapist = ?")
@@ -3412,23 +2433,21 @@ class App(ttk.Window):
                 where.append("st.danisan_adi LIKE ?")
                 params.append(f"%{q}%")
 
-            # ✅ SEANS_TAKVIMI ANA KAYNAK - records ile JOIN
+            # ✅ SEANS_TAKVIMI ANA KAYNAK (records konsolide edildi)
             sql = """
-                SELECT 
+                SELECT
                     st.id AS seans_id,
                     st.tarih,
                     COALESCE(st.saat, '') AS saat,
                     st.danisan_adi,
                     st.terapist,
-                    COALESCE(st.hizmet_bedeli, r.hizmet_bedeli, 0) AS hizmet_bedeli,
-                    COALESCE(r.alinan_ucret, 0) AS alinan_ucret,
-                    COALESCE(r.kalan_borc, 0) AS kalan_borc,
-                    COALESCE(st.notlar, r.notlar, '') AS notlar,
+                    COALESCE(st.hizmet_bedeli, 0) AS hizmet_bedeli,
+                    COALESCE(st.alinan_ucret, 0) AS alinan_ucret,
+                    COALESCE(st.kalan_borc, 0) AS kalan_borc,
+                    COALESCE(st.notlar, '') AS notlar,
                     COALESCE(st.seans_alindi, 0) AS seans_alindi,
-                    COALESCE(st.ucret_alindi, 0) AS ucret_alindi,
-                    r.id AS record_id
+                    COALESCE(st.ucret_alindi, 0) AS ucret_alindi
                 FROM seans_takvimi st
-                LEFT JOIN records r ON st.record_id = r.id OR st.id = r.seans_id
             """
             if where:
                 sql += " WHERE " + " AND ".join(where)
@@ -3445,7 +2464,7 @@ class App(ttk.Window):
         toplam = 0.0
         for r in rows:
             # r[0]=seans_id, r[1]=tarih, r[2]=saat, r[3]=danisan, r[4]=terapist,
-            # r[5]=hizmet_bedeli, r[6]=alinan_ucret, r[7]=kalan_borc, r[8]=notlar, r[9]=seans_alindi, r[10]=ucret_alindi, r[11]=record_id
+            # r[5]=hizmet_bedeli, r[6]=alinan_ucret, r[7]=kalan_borc, r[8]=notlar, r[9]=seans_alindi, r[10]=ucret_alindi
             borc = float(r[7] or 0)
             toplam += borc
             tag = "borclu" if borc > 0 else "tamam"
@@ -3480,22 +2499,6 @@ class App(ttk.Window):
         if not seans_id:
             messagebox.showwarning("Uyarı", "Lütfen bir kayıt seçiniz!")
             return
-        
-        # seans_id'den record_id'yi bul
-        try:
-            conn = self.veritabani_baglan()
-            cur = conn.cursor()
-            cur.execute("SELECT record_id FROM seans_takvimi WHERE id=?", (seans_id,))
-            row = cur.fetchone()
-            record_id = row[0] if row and row[0] else None
-            conn.close()
-            
-            if not record_id:
-                messagebox.showerror("Hata", "Bu seans kaydına bağlı bir record bulunamadı!")
-                return
-        except Exception as e:
-            messagebox.showerror("Hata", f"Kayıt bulunamadı:\n{e}")
-            return
 
         win = ttk.Toplevel(self)
         win.title("Ödeme Ekle")
@@ -3529,7 +2532,7 @@ class App(ttk.Window):
         def _save():
             """
             PIPELINE ENTEGRASYONU: Ödeme ekleme
-            → odeme_hareketleri, records (borç güncelle), kasa_hareketleri, seans_takvimi (ücret_alindi)
+            → odeme_hareketleri, kasa_hareketleri, seans_takvimi (alinan_ucret/kalan_borc/ücret_alindi)
             """
             try:
                 ek = parse_money(ent.get())
@@ -3551,24 +2554,24 @@ class App(ttk.Window):
                 # ✅ PIPELINE KULLAN (Tüm tablolar otomatik güncellenecek)
                 pipeline = DataPipeline(conn, kullanici_id)
                 basarili = pipeline.odeme_ekle(
-                    record_id=record_id,
+                    seans_id=seans_id,
                     tutar=ek,
                     tarih=tahsil_tarih,
                     odeme_sekli=odeme_sekli,
                     aciklama=aciklama,
                 )
-                
+
                 if basarili:
                     # Pipeline log'u konsola yaz (debugging için)
                     print(f"\n{'='*60}")
-                    print(f"💰 ÖDEME EKLEME BAŞARILI | seans_id={seans_id} | record_id={record_id} | +{ek} TL")
+                    print(f"💰 ÖDEME EKLEME BAŞARILI | seans_id={seans_id} | +{ek} TL")
                     print(f"{'='*60}")
                     print(pipeline.get_log())
                     print(f"{'='*60}\n")
-                    
+
                     # Kalan borcu kontrol et (Pipeline zaten güncelledi, sadece gösterim için)
                     cur = conn.cursor()
-                    cur.execute("SELECT kalan_borc FROM records WHERE id=?", (record_id,))
+                    cur.execute("SELECT kalan_borc FROM seans_takvimi WHERE id=?", (seans_id,))
                     kalan = float((cur.fetchone() or [0])[0] or 0)
                     conn.close()
                     
@@ -3618,7 +2621,7 @@ class App(ttk.Window):
         if not mod:
             return
         hedef_ids = ids[:1] if mod == "tek" else ids
-        if not messagebox.askyesno("Onay", f"{len(hedef_ids)} kayıt silinsin mi?\n\nİlgili tüm veriler (seans takvimi, records, ödemeler, kasa kayıtları) silinecektir!"):
+        if not messagebox.askyesno("Onay", f"{len(hedef_ids)} kayıt silinsin mi?\n\nİlgili tüm veriler (seans takvimi, ödemeler, kasa kayıtları) silinecektir!"):
             return
 
         conn = None
@@ -7267,7 +6270,7 @@ class App(ttk.Window):
 
             borc_map = {}
             try:
-                cur.execute("SELECT COALESCE(danisan_adi,''), COALESCE(kalan_borc,0) FROM records WHERE COALESCE(kalan_borc,0)>0")
+                cur.execute("SELECT COALESCE(danisan_adi,''), COALESCE(kalan_borc,0) FROM seans_takvimi WHERE COALESCE(kalan_borc,0)>0")
                 for d_adi_raw, borc_raw in (cur.fetchall() or []):
                     k = _norm_key(d_adi_raw)
                     if not k:
@@ -8784,10 +7787,10 @@ class App(ttk.Window):
         try:
             conn = self.veritabani_baglan()
             if self.kullanici_yetki == "kurum_muduru" or not self.kullanici_terapist:
-                df = pd.read_sql_query("SELECT * FROM records ORDER BY id DESC", conn)
+                df = pd.read_sql_query("SELECT * FROM seans_takvimi ORDER BY id DESC", conn)
             else:
                 df = pd.read_sql_query(
-                    "SELECT * FROM records WHERE terapist = ? ORDER BY id DESC",
+                    "SELECT * FROM seans_takvimi WHERE terapist = ? ORDER BY id DESC",
                     conn,
                     params=(self.kullanici_terapist,),
                 )
@@ -8922,30 +7925,6 @@ class App(ttk.Window):
                 conn = self.veritabani_baglan()
                 pipeline = DataPipeline(conn, self.kullanici[0] if self.kullanici else None)
                 rows = pipeline.eski_borc_kayitlari_getir()
-                if not rows:
-                    cur = conn.cursor()
-                    cur.execute(
-                        """
-                        SELECT id, COALESCE(tarih,''), COALESCE(danisan_adi,''),
-                               COALESCE(hizmet_bedeli,0), COALESCE(alinan_ucret,0), COALESCE(kalan_borc,0),
-                               COALESCE(notlar,''), COALESCE(seans_id,0)
-                        FROM records
-                        ORDER BY tarih DESC, id DESC
-                        """
-                    )
-                    for rid, tarih, danisan, hizmet, alinan, kalan, notlar, seans_id in cur.fetchall() or []:
-                        kalan_eff = float(kalan or 0)
-                        if kalan_eff <= 0:
-                            kalan_eff = max(0.0, float(hizmet or 0) - float(alinan or 0))
-                        if kalan_eff <= 0:
-                            continue
-                        rows.append({
-                            "record_id": int(rid or 0), "tarih": tarih, "danisan": danisan,
-                            "hizmet_bedeli": float(hizmet or 0), "alinan_ucret": float(alinan or 0), "kalan_borc": kalan_eff,
-                            "tur": "devir_borc" if "devir" in str(notlar or "").lower() else "kayit_borcu",
-                            "silinebilir": int(seans_id or 0) == 0 and float(alinan or 0) <= 0,
-                            "notlar": notlar,
-                        })
                 for r in rows:
                     tree.insert(
                         "",
@@ -9119,26 +8098,6 @@ class App(ttk.Window):
                 conn = self.veritabani_baglan()
                 pipeline = DataPipeline(conn, self.kullanici[0] if self.kullanici else None)
                 rows = pipeline.toplu_odeme_kayitlari_getir()
-                if not rows:
-                    cur = conn.cursor()
-                    cur.execute(
-                        """
-                        SELECT id, COALESCE(tarih,''), COALESCE(aciklama,''), COALESCE(tutar,0), COALESCE(record_id,0)
-                        FROM kasa_hareketleri
-                        WHERE LOWER(COALESCE(tip,'')) IN ('giren','gelir','in')
-                        ORDER BY id DESC
-                        """
-                    )
-                    for kid, tarih, aciklama, tutar, rid in cur.fetchall() or []:
-                        ac_low = str(aciklama or '').lower()
-                        if not any(k in ac_low for k in ('toplu ödeme','toplu odeme','peşinat','pesinat','ödeme:','odeme:')):
-                            continue
-                        rows.append({
-                            'kasa_id': int(kid or 0), 'tarih': tarih, 'aciklama': aciklama,
-                            'tutar': float(tutar or 0), 'record_id': int(rid or 0), 'danisan': '',
-                            'record_danisan': '', 'matched': bool(rid),
-                            'kayit_turu': 'toplu_odeme' if 'toplu' in ac_low else ('pesinat' if 'pesinat' in ac_low or 'peşinat' in ac_low else 'odeme')
-                        })
                 for r in rows:
                     durum = "Eşleşti" if r.get("matched") else "Eşleşmedi"
                     tag = "ok" if r.get("matched") else "bad"
@@ -9690,7 +8649,7 @@ class App(ttk.Window):
                             danisan_norm = self._normalize_name_key(self._canonical_danisan_adi(danisan_adi))
                             terapist_norm = str(terapist).strip()
                             cur.execute(
-                                "SELECT id, COALESCE(danisan_adi,'') FROM records WHERE tarih = ? AND TRIM(COALESCE(terapist,'')) = ?",
+                                "SELECT id, COALESCE(danisan_adi,'') FROM seans_takvimi WHERE tarih = ? AND TRIM(COALESCE(terapist,'')) = ?",
                                 (tarih, terapist_norm)
                             )
                             existing = cur.fetchall() or []
@@ -9961,7 +8920,7 @@ class App(ttk.Window):
                             COALESCE(SUM(alinan_ucret),0),
                             COALESCE(SUM(hizmet_bedeli - alinan_ucret),0),
                             COUNT(*)
-                        FROM records
+                        FROM seans_takvimi
                         WHERE tarih >= ? AND tarih <= ?
                         """,
                         (bas, bit),
@@ -9980,7 +8939,7 @@ class App(ttk.Window):
                     )
                     kasa_giren, kasa_cikan = cur.fetchone() or (0, 0)
                 else:
-                    # Eğitim görevlisi: kendi seansları + kendi tahsilatları (record_id üzerinden)
+                    # Eğitim görevlisi: kendi seansları + kendi tahsilatları (seans_id üzerinden)
                     ter = self.kullanici_terapist or ""
                     cur.execute(
                         """
@@ -9988,7 +8947,7 @@ class App(ttk.Window):
                             COALESCE(SUM(alinan_ucret),0),
                             COALESCE(SUM(hizmet_bedeli - alinan_ucret),0),
                             COUNT(*)
-                        FROM records
+                        FROM seans_takvimi
                         WHERE tarih >= ? AND tarih <= ? AND terapist = ?
                         """,
                         (bas, bit, ter),
@@ -10001,7 +8960,7 @@ class App(ttk.Window):
                             COALESCE(SUM(CASE WHEN kh.tip='giren' THEN kh.tutar ELSE 0 END),0),
                             COALESCE(SUM(CASE WHEN kh.tip='cikan' THEN kh.tutar ELSE 0 END),0)
                         FROM kasa_hareketleri kh
-                        LEFT JOIN records r ON r.id = kh.record_id
+                        LEFT JOIN seans_takvimi r ON r.id = kh.seans_id
                         WHERE kh.tarih >= ? AND kh.tarih <= ? AND r.terapist = ?
                         """,
                         (bas, bit, ter),
@@ -10032,7 +8991,7 @@ class App(ttk.Window):
         ttk.Button(frm, text="Rapor Oluştur", bootstyle="primary", command=_rapor).grid(row=0, column=4, padx=10, pady=6)
 
     def kasa_defteri_goster(self):
-        # Kurum müdürü tam yetki; eğitim görevlisi kendi tahsilatlarını görebilir (record_id -> records.terapist)
+        # Kurum müdürü tam yetki; eğitim görevlisi kendi tahsilatlarını görebilir (seans_id -> seans_takvimi.terapist)
         win = ttk.Toplevel(self)
         win.title("Kasa Defteri (Günlük)")
         center_window_smart(win, 1200, 780)
@@ -10064,11 +9023,11 @@ class App(ttk.Window):
             tree.heading(c, text=c)
             tree.column(c, width=140)
         tree.column("ID", width=70)
-        tree.column("Tip", width=80)
+        tree.column("Hareket Tipi", width=80)
         tree.column("Açıklama", width=360)
         tree.column("Tutar", width=120)
-        tree.column("KayıtID", width=90)
-        tree.column("Oluşturma", width=160)
+        tree.column("İlgili Kayıt", width=90)
+        tree.column("Oluşturma Tarihi", width=160)
 
         sb = ttk.Scrollbar(frame, orient=VERTICAL, command=tree.yview)
         tree.configure(yscroll=sb.set)
@@ -10086,7 +9045,7 @@ class App(ttk.Window):
                 if self.kullanici_yetki == "kurum_muduru":
                     cur.execute(
                         """
-                        SELECT id, tip, aciklama, tutar, COALESCE(odeme_sekli,''), COALESCE(record_id,''), COALESCE(olusturma_tarihi,'')
+                        SELECT id, tip, aciklama, tutar, COALESCE(odeme_sekli,''), COALESCE(seans_id,''), COALESCE(olusturma_tarihi,'')
                         FROM kasa_hareketleri
                         WHERE tarih=?
                         ORDER BY id ASC
@@ -10118,10 +9077,10 @@ class App(ttk.Window):
                     ter = self.kullanici_terapist or ""
                     cur.execute(
                         """
-                        SELECT kh.id, kh.tip, kh.aciklama, kh.tutar, COALESCE(kh.odeme_sekli,''), COALESCE(kh.record_id,''), COALESCE(kh.olusturma_tarihi,'')
+                        SELECT kh.id, kh.tip, kh.aciklama, kh.tutar, COALESCE(kh.odeme_sekli,''), COALESCE(kh.seans_id,''), COALESCE(kh.olusturma_tarihi,'')
                         FROM kasa_hareketleri kh
-                        LEFT JOIN records r ON r.id = kh.record_id
-                        WHERE kh.tarih=? AND (r.terapist = ? OR kh.record_id IS NULL)
+                        LEFT JOIN seans_takvimi r ON r.id = kh.seans_id
+                        WHERE kh.tarih=? AND (r.terapist = ? OR kh.seans_id IS NULL)
                         ORDER BY kh.id ASC
                         """,
                         (tarih, ter),
@@ -10133,8 +9092,8 @@ class App(ttk.Window):
                         SELECT COALESCE(SUM(CASE WHEN kh.tip='giren' THEN kh.tutar ELSE 0 END),0),
                                COALESCE(SUM(CASE WHEN kh.tip IN ('cikan','çıkan') THEN kh.tutar ELSE 0 END),0)
                         FROM kasa_hareketleri kh
-                        LEFT JOIN records r ON r.id = kh.record_id
-                        WHERE kh.tarih=? AND (r.terapist = ? OR kh.record_id IS NULL)
+                        LEFT JOIN seans_takvimi r ON r.id = kh.seans_id
+                        WHERE kh.tarih=? AND (r.terapist = ? OR kh.seans_id IS NULL)
                         """,
                         (tarih, ter),
                     )
@@ -10144,7 +9103,7 @@ class App(ttk.Window):
                         """
                         SELECT COALESCE(SUM(CASE WHEN kh.tip='giren' THEN kh.tutar ELSE -kh.tutar END),0)
                         FROM kasa_hareketleri kh
-                        LEFT JOIN records r ON r.id = kh.record_id
+                        LEFT JOIN seans_takvimi r ON r.id = kh.seans_id
                         WHERE kh.tarih < ? AND r.terapist=?
                         """,
                         (tarih, ter),
@@ -10388,7 +9347,7 @@ class App(ttk.Window):
                         SELECT id, tarih, saat, danisan_adi, terapist,
                                COALESCE(seans_alindi,0), COALESCE(ucret_alindi,0), COALESCE(ucret_tutar,0), COALESCE(odeme_sekli,''), COALESCE(notlar,'')
                         FROM seans_takvimi
-                        WHERE tarih >= ? AND tarih <= ? AND terapist = ?
+                        WHERE tarih >= ? AND tarih <= ? AND terapist = ? AND COALESCE(durum,'')!='devir_borc'
                         ORDER BY tarih, saat
                         """,
                         (bas_s, bit, ter_filter),
@@ -10399,7 +9358,7 @@ class App(ttk.Window):
                         SELECT id, tarih, saat, danisan_adi, terapist,
                                COALESCE(seans_alindi,0), COALESCE(ucret_alindi,0), COALESCE(ucret_tutar,0), COALESCE(odeme_sekli,''), COALESCE(notlar,'')
                         FROM seans_takvimi
-                        WHERE tarih >= ? AND tarih <= ? AND terapist = ?
+                        WHERE tarih >= ? AND tarih <= ? AND terapist = ? AND COALESCE(durum,'')!='devir_borc'
                         ORDER BY tarih, saat
                         """,
                         (bas_s, bit, self.kullanici_terapist),
@@ -10410,7 +9369,7 @@ class App(ttk.Window):
                         SELECT id, tarih, saat, danisan_adi, terapist,
                                COALESCE(seans_alindi,0), COALESCE(ucret_alindi,0), COALESCE(ucret_tutar,0), COALESCE(odeme_sekli,''), COALESCE(notlar,'')
                         FROM seans_takvimi
-                        WHERE tarih >= ? AND tarih <= ?
+                        WHERE tarih >= ? AND tarih <= ? AND COALESCE(durum,'')!='devir_borc'
                         ORDER BY tarih, saat
                         """,
                         (bas_s, bit),
@@ -10619,7 +9578,7 @@ class App(ttk.Window):
                                COALESCE(odeme_sekli,'') AS odeme_sekli,
                                COALESCE(notlar,'') AS notlar
                         FROM seans_takvimi
-                        WHERE tarih >= ? AND tarih <= ? AND terapist = ?
+                        WHERE tarih >= ? AND tarih <= ? AND terapist = ? AND COALESCE(durum,'')!='devir_borc'
                         ORDER BY tarih, saat
                         """,
                         conn,
@@ -10635,7 +9594,7 @@ class App(ttk.Window):
                                COALESCE(odeme_sekli,'') AS odeme_sekli,
                                COALESCE(notlar,'') AS notlar
                         FROM seans_takvimi
-                        WHERE tarih >= ? AND tarih <= ? AND terapist = ?
+                        WHERE tarih >= ? AND tarih <= ? AND terapist = ? AND COALESCE(durum,'')!='devir_borc'
                         ORDER BY tarih, saat
                         """,
                         conn,
@@ -10651,7 +9610,7 @@ class App(ttk.Window):
                                COALESCE(odeme_sekli,'') AS odeme_sekli,
                                COALESCE(notlar,'') AS notlar
                         FROM seans_takvimi
-                        WHERE tarih >= ? AND tarih <= ?
+                        WHERE tarih >= ? AND tarih <= ? AND COALESCE(durum,'')!='devir_borc'
                         ORDER BY tarih, saat
                         """,
                         conn,
@@ -10816,16 +9775,11 @@ class App(ttk.Window):
                 cur = conn.cursor()
                 for gun_idx, gun in enumerate(gunler):
                     tarih = (bas + datetime.timedelta(days=gun_idx)).strftime("%Y-%m-%d")
-                    # seans_takvimi varsa oradan, yoksa records'tan
-                    try:
-                        cur.execute(
-                            "SELECT danisan_adi, terapist FROM seans_takvimi WHERE tarih=? ORDER BY saat",
-                            (tarih,),
-                        )
-                        seanslar = cur.fetchall()
-                    except Exception:
-                        cur.execute("SELECT danisan_adi, terapist FROM records WHERE tarih=? ORDER BY id", (tarih,))
-                        seanslar = cur.fetchall()
+                    cur.execute(
+                        "SELECT danisan_adi, terapist FROM seans_takvimi WHERE tarih=? AND COALESCE(durum,'')!='devir_borc' ORDER BY saat",
+                        (tarih,),
+                    )
+                    seanslar = cur.fetchall()
                     for danisan, terapist in seanslar:
                         if self.kullanici_yetki != "kurum_muduru" and self.kullanici_terapist:
                             if terapist != self.kullanici_terapist:
@@ -10917,37 +9871,26 @@ class App(ttk.Window):
                 messagebox.showwarning("Uyarı", "Name Hoca kurumdan ayrıldı.")
                 return
             try:
-                conn = self.veritabani_baglan()
-                cur = conn.cursor()
                 t = (tarih_var.get() or "").strip()
                 s = (saat_cb.get() or "").strip() or self._default_saat()
                 d = (dan_cb.get() or "").strip()
                 ter = (ter_cb.get() or "").strip()
                 nt = (ent_not.get() or "").strip()
-                cur.execute(
-                    """
-                    INSERT INTO seans_takvimi (tarih, saat, danisan_adi, terapist, oda, durum, notlar, olusturma_tarihi, olusturan_kullanici_id, record_id)
-                    VALUES (?,?,?,?,?,?,?,?,?,NULL)
-                    """,
-                    (
-                        t,
-                        s,
-                        d,
-                        ter,
-                        (oda_cb.get() or "").strip(),
-                        "planlandi",
-                        nt,
-                        datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        self.kullanici[0] if self.kullanici else None,
-                    ),
+                oda = (oda_cb.get() or "").strip()
+
+                conn = self.veritabani_baglan()
+                kullanici_id = self.kullanici[0] if self.kullanici else None
+                pipeline = DataPipeline(conn, kullanici_id)
+                hb = pipeline.get_price_for_danisan_terapist(d, ter)
+                sid = pipeline.seans_kayit(
+                    tarih=t, saat=s, danisan_adi=d, terapist=ter,
+                    hizmet_bedeli=hb, alinan_ucret=0.0, notlar=nt, oda=oda,
                 )
-                sid = int(cur.lastrowid or 0)
-                try:
-                    self._sync_from_seans_to_record(cur, sid, t, s, d, ter, nt)
-                except Exception:
-                    pass
-                conn.commit()
+                hata = pipeline.get_last_error()
                 conn.close()
+                if not sid:
+                    messagebox.showerror("Hata", f"Seans eklenemedi:\n{hata or 'Bilinmeyen hata (oda çakışması olabilir).'}")
+                    return
             except Exception as e:
                 messagebox.showerror("Hata", f"Seans eklenemedi:\n{e}")
                 return
@@ -12114,7 +11057,7 @@ class App(ttk.Window):
                                COALESCE(seans_alindi,0), COALESCE(ucret_alindi,0), COALESCE(ucret_tutar,0), COALESCE(odeme_sekli,''),
                                COALESCE(notlar,'')
                         FROM seans_takvimi
-                        WHERE tarih=? AND terapist=?
+                        WHERE tarih=? AND terapist=? AND COALESCE(durum,'')!='devir_borc'
                         ORDER BY saat
                         """,
                         (tarih, terapist),
@@ -12126,7 +11069,7 @@ class App(ttk.Window):
                                COALESCE(seans_alindi,0), COALESCE(ucret_alindi,0), COALESCE(ucret_tutar,0), COALESCE(odeme_sekli,''),
                                COALESCE(notlar,'')
                         FROM seans_takvimi
-                        WHERE tarih=?
+                        WHERE tarih=? AND COALESCE(durum,'')!='devir_borc'
                         ORDER BY saat
                         """,
                         (tarih,),
@@ -12267,21 +11210,12 @@ class App(ttk.Window):
             return
         if not messagebox.askyesno(
             "Onay",
-            f"{danisan_adi} danışanını listeden kaldırmak istediğinize emin misiniz?\n\n"
-            "Bu işlem danışanı pasife alır (aktif=0).",
+            "Bu seans kaydı silinsin mi?\n\n"
+            "Tüm bağlı kayıtlar (kasa, ödeme, personel ücret) da silinecektir!",
         ):
             return
         try:
             conn = self.veritabani_baglan()
-            cur = conn.cursor()
-            # bağlı records kaydı varsa onu da sil
-            try:
-                cur.execute("SELECT COALESCE(record_id,NULL) FROM seans_takvimi WHERE id=?", (sid,))
-                rid = (cur.fetchone() or [None])[0]
-                if rid:
-                    cur.execute("DELETE FROM records WHERE id=?", (rid,))
-            except Exception:
-                pass
             # ✅ ENTERPRISE: Pipeline üzerinden sil (cascade + audit trail)
             kullanici_id = self.kullanici[0] if self.kullanici else None
             pipeline = DataPipeline(conn, kullanici_id)

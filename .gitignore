@@ -46,6 +46,7 @@ ARCHIVE/
 
 # Yerel tam yedek kopyaları (içerik repoya eklenmez)
 backup_v1_3_legacy_*/
+Session_Tracking_App-main_backup_*/
 
 # Kullanılmayan modül klasörü
 leta_modules/

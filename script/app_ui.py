@@ -735,6 +735,16 @@ class App(ttk.Window):
         except Exception:
             return "09:00"
 
+    def gunluk_rapor_pencere(self):
+        bugun = datetime.datetime.now().strftime("%Y-%m-%d")
+        self._rapor_pencere(bugun, bugun, title="Günlük Rapor")
+
+    def haftalik_rapor_pencere(self):
+        dt = datetime.datetime.now()
+        hafta_bas = (dt - datetime.timedelta(days=dt.weekday())).strftime("%Y-%m-%d")
+        hafta_bit = (dt + datetime.timedelta(days=6 - dt.weekday())).strftime("%Y-%m-%d")
+        self._rapor_pencere(hafta_bas, hafta_bit, title="Haftalık Rapor")
+
     def toplam_rapor_pencere(self):
         self._rapor_pencere("0001-01-01", "9999-12-31", title="Toplam Rapor (Genel)")
 

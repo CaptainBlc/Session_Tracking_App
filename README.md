@@ -34,13 +34,14 @@
 ## Kurulum / Setup
 
 ```bash
-git clone https://github.com/CaptainBlc/Leta-Takip.git
-cd Leta-Takip
+git clone https://github.com/CaptainBlc/Session_Tracking_App.git
+cd Session_Tracking_App
 python -m venv .venv
 .venv\Scripts\activate        # Windows
 # source .venv/bin/activate   # macOS / Linux
 pip install -r requirements.txt
-python -m script.main
+cd script
+python main.py
 ```
 
 ---

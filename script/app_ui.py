@@ -9253,7 +9253,7 @@ class App(ttk.Window):
                     cur.execute(
                         """
                         SELECT id, tarih, saat, danisan_adi, terapist,
-                               COALESCE(seans_alindi,0), COALESCE(ucret_alindi,0), COALESCE(ucret_tutar,0), COALESCE(odeme_sekli,''), COALESCE(notlar,'')
+                               COALESCE(seans_alindi,0), COALESCE(ucret_alindi,0), COALESCE(hizmet_bedeli,0), COALESCE(odeme_sekli,''), COALESCE(notlar,'')
                         FROM seans_takvimi
                         WHERE tarih >= ? AND tarih <= ? AND terapist = ? AND COALESCE(durum,'')!='devir_borc'
                         ORDER BY tarih, saat
@@ -9264,7 +9264,7 @@ class App(ttk.Window):
                     cur.execute(
                         """
                         SELECT id, tarih, saat, danisan_adi, terapist,
-                               COALESCE(seans_alindi,0), COALESCE(ucret_alindi,0), COALESCE(ucret_tutar,0), COALESCE(odeme_sekli,''), COALESCE(notlar,'')
+                               COALESCE(seans_alindi,0), COALESCE(ucret_alindi,0), COALESCE(hizmet_bedeli,0), COALESCE(odeme_sekli,''), COALESCE(notlar,'')
                         FROM seans_takvimi
                         WHERE tarih >= ? AND tarih <= ? AND terapist = ? AND COALESCE(durum,'')!='devir_borc'
                         ORDER BY tarih, saat
@@ -9275,7 +9275,7 @@ class App(ttk.Window):
                     cur.execute(
                         """
                         SELECT id, tarih, saat, danisan_adi, terapist,
-                               COALESCE(seans_alindi,0), COALESCE(ucret_alindi,0), COALESCE(ucret_tutar,0), COALESCE(odeme_sekli,''), COALESCE(notlar,'')
+                               COALESCE(seans_alindi,0), COALESCE(ucret_alindi,0), COALESCE(hizmet_bedeli,0), COALESCE(odeme_sekli,''), COALESCE(notlar,'')
                         FROM seans_takvimi
                         WHERE tarih >= ? AND tarih <= ? AND COALESCE(durum,'')!='devir_borc'
                         ORDER BY tarih, saat
@@ -9482,7 +9482,7 @@ class App(ttk.Window):
                         SELECT tarih, saat, danisan_adi, terapist,
                                COALESCE(seans_alindi,0) AS seans_alindi,
                                COALESCE(ucret_alindi,0) AS ucret_alindi,
-                               COALESCE(ucret_tutar,0) AS ucret_tutar,
+                               COALESCE(hizmet_bedeli,0) AS ucret_tutar,
                                COALESCE(odeme_sekli,'') AS odeme_sekli,
                                COALESCE(notlar,'') AS notlar
                         FROM seans_takvimi
@@ -9498,7 +9498,7 @@ class App(ttk.Window):
                         SELECT tarih, saat, danisan_adi, terapist,
                                COALESCE(seans_alindi,0) AS seans_alindi,
                                COALESCE(ucret_alindi,0) AS ucret_alindi,
-                               COALESCE(ucret_tutar,0) AS ucret_tutar,
+                               COALESCE(hizmet_bedeli,0) AS ucret_tutar,
                                COALESCE(odeme_sekli,'') AS odeme_sekli,
                                COALESCE(notlar,'') AS notlar
                         FROM seans_takvimi
@@ -9514,7 +9514,7 @@ class App(ttk.Window):
                         SELECT tarih, saat, danisan_adi, terapist,
                                COALESCE(seans_alindi,0) AS seans_alindi,
                                COALESCE(ucret_alindi,0) AS ucret_alindi,
-                               COALESCE(ucret_tutar,0) AS ucret_tutar,
+                               COALESCE(hizmet_bedeli,0) AS ucret_tutar,
                                COALESCE(odeme_sekli,'') AS odeme_sekli,
                                COALESCE(notlar,'') AS notlar
                         FROM seans_takvimi
@@ -10962,7 +10962,7 @@ class App(ttk.Window):
                     cur.execute(
                         """
                         SELECT id, tarih, saat, danisan_adi, terapist, COALESCE(oda,''), COALESCE(durum,''),
-                               COALESCE(seans_alindi,0), COALESCE(ucret_alindi,0), COALESCE(ucret_tutar,0), COALESCE(odeme_sekli,''),
+                               COALESCE(seans_alindi,0), COALESCE(ucret_alindi,0), COALESCE(hizmet_bedeli,0), COALESCE(odeme_sekli,''),
                                COALESCE(notlar,'')
                         FROM seans_takvimi
                         WHERE tarih=? AND terapist=? AND COALESCE(durum,'')!='devir_borc'
@@ -10974,7 +10974,7 @@ class App(ttk.Window):
                     cur.execute(
                         """
                         SELECT id, tarih, saat, danisan_adi, terapist, COALESCE(oda,''), COALESCE(durum,''),
-                               COALESCE(seans_alindi,0), COALESCE(ucret_alindi,0), COALESCE(ucret_tutar,0), COALESCE(odeme_sekli,''),
+                               COALESCE(seans_alindi,0), COALESCE(ucret_alindi,0), COALESCE(hizmet_bedeli,0), COALESCE(odeme_sekli,''),
                                COALESCE(notlar,'')
                         FROM seans_takvimi
                         WHERE tarih=? AND COALESCE(durum,'')!='devir_borc'
@@ -11027,7 +11027,7 @@ class App(ttk.Window):
             cur.execute(
                 """
                 SELECT tarih, saat, danisan_adi, terapist, COALESCE(oda,''), COALESCE(durum,''), COALESCE(seans_alindi,0),
-                       COALESCE(ucret_alindi,0), COALESCE(ucret_tutar,0), COALESCE(odeme_sekli,''), COALESCE(notlar,'')
+                       COALESCE(ucret_alindi,0), COALESCE(hizmet_bedeli,0), COALESCE(odeme_sekli,''), COALESCE(notlar,'')
                 FROM seans_takvimi WHERE id=?
                 """,
                 (sid,),
@@ -11081,7 +11081,7 @@ class App(ttk.Window):
                 cur.execute(
                     """
                     UPDATE seans_takvimi
-                    SET tarih=?, saat=?, danisan_adi=?, terapist=?, oda=?, durum=?, seans_alindi=?, ucret_alindi=?, ucret_tutar=?, odeme_sekli=?, notlar=?
+                    SET tarih=?, saat=?, danisan_adi=?, terapist=?, oda=?, durum=?, seans_alindi=?, ucret_alindi=?, hizmet_bedeli=?, odeme_sekli=?, notlar=?
                     WHERE id=?
                     """,
                     (

@@ -424,6 +424,26 @@ class DataPipeline:
             log_exception("pipeline.seans_durum_guncelle", e)
             return False
 
+    def seans_not_guncelle(self, seans_id: int, notlar: str) -> bool:
+        if not self.table_exists("seans_takvimi"):
+            return False
+        try:
+            self.conn.execute("BEGIN")
+            self.cur.execute(
+                "UPDATE seans_takvimi SET notlar=? WHERE id=?",
+                (notlar or "", seans_id),
+            )
+            self._audit("seans_not_guncelle", "seans_takvimi", seans_id, {"notlar": notlar})
+            self.conn.commit()
+            return True
+        except Exception as e:
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            log_exception("pipeline.seans_not_guncelle", e)
+            return False
+
     def kayit_sil(self, seans_id: int) -> bool:
         try:
             self.conn.execute("BEGIN")

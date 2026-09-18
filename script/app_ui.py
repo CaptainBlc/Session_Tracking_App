@@ -8740,98 +8740,6 @@ class App(ttk.Window):
         # Kapat butonu
         ttk.Button(wrapper, text="Kapat", bootstyle="secondary", command=win.destroy).pack(pady=(10, 0))
     
-    def eski_veri_migration_legacy(self):
-        """Eski veritabanından yeni sisteme veri aktarımı"""
-        win = ttk.Toplevel(self)
-        win.title("Eski Veri Migration")
-        win.geometry("600x400")
-        center_window(win, 600, 400)
-        win.transient(self)
-        self._brand_window(win)
-        
-        wrapper = ttk.Frame(win, padding=20)
-        wrapper.pack(fill=BOTH, expand=True)
-        
-        ttk.Label(wrapper, text="Eski Veri Migration", font=("Segoe UI", 14, "bold"), bootstyle="primary").pack(pady=(0, 20))
-        
-        ttk.Label(wrapper, text="Bu araç eski veritabanından yeni sisteme veri aktarımı yapar.", 
-                 font=("Segoe UI", 10), wraplength=550).pack(pady=(0, 20))
-        
-        # Eski DB seçimi
-        frm_db = ttk.Frame(wrapper)
-        frm_db.pack(fill=X, pady=10)
-        
-        ttk.Label(frm_db, text="Eski Veritabanı:", width=20).pack(side=LEFT, padx=5)
-        ent_eski_db = ttk.Entry(frm_db, width=40)
-        ent_eski_db.pack(side=LEFT, padx=5, fill=X, expand=True)
-        
-        def db_sec():
-            dosya = filedialog.askopenfilename(
-                title="Eski Veritabanı Seç",
-                filetypes=[("Veritabanı Dosyaları", "*.db"), ("Tüm Dosyalar", "*.*")]
-            )
-            if dosya:
-                ent_eski_db.delete(0, END)
-                ent_eski_db.insert(0, dosya)
-        
-        ttk.Button(frm_db, text="📁 Seç", bootstyle="primary", command=db_sec).pack(side=LEFT, padx=5)
-        
-        # Sonuç alanı
-        frm_sonuc = ttk.Labelframe(wrapper, text="Migration Sonuçları", padding=10, bootstyle="secondary")
-        frm_sonuc.pack(fill=BOTH, expand=True, pady=10)
-        
-        text_sonuc = tk.Text(frm_sonuc, height=10, wrap=tk.WORD)
-        text_sonuc.pack(fill=BOTH, expand=True)
-        sb_sonuc = ttk.Scrollbar(frm_sonuc, orient=VERTICAL, command=text_sonuc.yview)
-        text_sonuc.configure(yscrollcommand=sb_sonuc.set)
-        sb_sonuc.pack(side=RIGHT, fill=Y)
-        
-        def migration_baslat():
-            eski_db_yolu = ent_eski_db.get().strip()
-            if not eski_db_yolu:
-                messagebox.showerror("Hata", "Lütfen eski veritabanı dosyasını seçin.")
-                return
-            
-            if not os.path.exists(eski_db_yolu):
-                messagebox.showerror("Hata", f"Veritabanı dosyası bulunamadı:\n{eski_db_yolu}")
-                return
-            
-            text_sonuc.delete("1.0", END)
-            text_sonuc.insert(END, "🔄 Migration başlatılıyor...\n\n")
-            win.update()
-            
-            try:
-                # Migration script'ini import et ve çalıştır
-                import migration_eski_veriler
-                results = migration_eski_veriler.migrate_eski_veriler(eski_db_yolu)
-                
-                if results["success"]:
-                    text_sonuc.insert(END, "✅ Migration tamamlandı!\n\n")
-                    text_sonuc.insert(END, "Aktarılan Tablolar:\n")
-                    for table, count in results["migrated_tables"].items():
-                        text_sonuc.insert(END, f"  • {table}: {count} kayıt\n")
-                    
-                    if results["errors"]:
-                        text_sonuc.insert(END, "\n⚠️ Hatalar:\n")
-                        for error in results["errors"]:
-                            text_sonuc.insert(END, f"  • {error}\n")
-                    
-                    messagebox.showinfo("Başarılı", "Migration tamamlandı! Sonuçları kontrol edin.")
-                else:
-                    text_sonuc.insert(END, "❌ Migration başarısız!\n\n")
-                    text_sonuc.insert(END, "Hatalar:\n")
-                    for error in results["errors"]:
-                        text_sonuc.insert(END, f"  • {error}\n")
-                    
-                    messagebox.showerror("Hata", "Migration başarısız! Detaylar için sonuç alanına bakın.")
-            
-            except Exception as e:
-                text_sonuc.insert(END, f"❌ Hata: {e}\n")
-                messagebox.showerror("Hata", f"Migration hatası:\n{e}")
-                log_exception("eski_veri_migration", e)
-        
-        ttk.Button(wrapper, text="🚀 Migration Başlat", bootstyle="success", 
-                  command=migration_baslat).pack(pady=10)
 
     def kullanim_kilavuzu_ac(self):
         try:
@@ -8921,7 +8829,7 @@ class App(ttk.Window):
                             COALESCE(SUM(hizmet_bedeli - alinan_ucret),0),
                             COUNT(*)
                         FROM seans_takvimi
-                        WHERE tarih >= ? AND tarih <= ?
+                        WHERE tarih >= ? AND tarih <= ? AND COALESCE(durum,'') != 'devir_borc'
                         """,
                         (bas, bit),
                     )
@@ -8948,7 +8856,7 @@ class App(ttk.Window):
                             COALESCE(SUM(hizmet_bedeli - alinan_ucret),0),
                             COUNT(*)
                         FROM seans_takvimi
-                        WHERE tarih >= ? AND tarih <= ? AND terapist = ?
+                        WHERE tarih >= ? AND tarih <= ? AND terapist = ? AND COALESCE(durum,'') != 'devir_borc'
                         """,
                         (bas, bit, ter),
                     )

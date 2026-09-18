@@ -1,8 +1,10 @@
 from __future__ import annotations
 import sys
 import traceback
+from tkinter import messagebox
 
 from core import *  # core package export layer
+from core.backup import _db_integrity_ok
 from app_ui import App
 
 
@@ -12,6 +14,20 @@ def main():
     print(">>> user guide ok")
     silent_backup()
     print(">>> backup ok")
+
+    try:
+        dbp = db_path()
+        if dbp.exists() and not _db_integrity_ok(dbp):
+            log_exception("main_db_integrity_check", Exception("Veritabani butunluk kontrolu basarisiz"))
+            messagebox.showwarning(
+                "Veritabanı Uyarısı",
+                "Veritabanı bütünlük kontrolü başarısız oldu. Uygulama yine de "
+                "açılacak, ancak yedeklerinizi kontrol etmenizi öneririz "
+                "(Hakkında ekranından son yedek durumuna bakabilirsiniz).",
+            )
+    except Exception as e:
+        log_exception("main_db_integrity_check_wrapper", e)
+
     init_db()
     print(">>> init_db ok")
 

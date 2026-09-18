@@ -18,9 +18,11 @@ def parse_money(text: str | None) -> float:
 def format_money(val) -> str:
     try:
         num = float(val)
-        return f"{num:,.2f} ₺"
+        s = f"{num:,.2f}"
+        s = s.replace(",", "§").replace(".", ",").replace("§", ".")
+        return f"{s} ₺"
     except Exception:
-        return "0.00 ₺"
+        return "0,00 ₺"
 
 
 def hesapla_personel_ucreti(personel_adi: str, seans_ucreti: float) -> float:
@@ -42,5 +44,7 @@ def hesapla_personel_ucreti(personel_adi: str, seans_ucreti: float) -> float:
             oran = float(kural.get("oran") or 0.0)
             return (float(seans_ucreti or 0.0) * oran) / 100.0
         return (float(seans_ucreti or 0.0) * 40.0) / 100.0
-    except Exception:
+    except Exception as e:
+        from .logging_utils import log_exception
+        log_exception(f"hesapla_personel_ucreti_fallback[{personel_adi}]", e)
         return (float(seans_ucreti or 0.0) * 40.0) / 100.0

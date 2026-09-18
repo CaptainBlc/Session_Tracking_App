@@ -48,9 +48,7 @@ def assets_dir() -> Path:
         p = Path(sys._MEIPASS) / "assets"
         if p.exists():
             return p
-    # Öncelik: script/assets (repo düzeni), sonra app/assets
     candidates = [
-        app_dir() / "script" / "assets",
         app_dir() / "assets",
     ]
     for c in candidates:

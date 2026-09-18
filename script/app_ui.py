@@ -7273,8 +7273,8 @@ class App(ttk.Window):
                     if not k:
                         continue
                     borc_map[k] = float(borc_map.get(k, 0.0) or 0.0) + float(borc_raw or 0.0)
-            except Exception:
-                pass
+            except Exception as e:
+                log_exception("_tum_danisanlari_listele_borc_map", e)
 
             conn.close()
 
@@ -7317,7 +7317,7 @@ class App(ttk.Window):
                         cur2 = conn2.cursor()
                         cur2.execute(
                             """
-                            SELECT veli_yakinlik_derecesi
+                            SELECT yakinlik
                             FROM ogrenci_aile_bilgileri
                             WHERE ogrenci_id = ? AND veli_adi = ?
                             LIMIT 1
@@ -7328,8 +7328,8 @@ class App(ttk.Window):
                         conn2.close()
                         if yakinlik_row and yakinlik_row[0]:
                             veli_bilgisi = f"{row[3]} ({yakinlik_row[0]})"
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log_exception("_tum_danisanlari_listele_veli_yakinlik", e)
                 
                 tree.insert("", END, values=(
                     row[0], row[1], dogum_tarihi, veli_bilgisi, row[4] or "", row[5] or "", bakiye, durum

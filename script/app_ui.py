@@ -7705,28 +7705,114 @@ class App(ttk.Window):
             messagebox.showerror("Hata", f"Terapist silme hatası:\n{e}")
 
     def excel_aktar(self):
+        """
+        Tüm verileri, ID gibi ham teknik sütunlar yerine herkesin anlayabileceği
+        açıklamalarla, tek bir Excel dosyasında ayrı sayfalar halinde dışa aktarır:
+        Özet (genel bakış), Seanslar, Kasa Hareketleri, Personel Ücretleri, Danışanlar.
+        Her sayfa hem tek başına incelenebilir hem de dosyanın bütünü genel tabloyu verir.
+        Eğitim görevlisi girişinde sadece kendi verileri dahil edilir.
+        """
         path = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
             filetypes=[("Excel dosyası", "*.xlsx"), ("Tüm dosyalar", "*.*")],
-            title="Excel'e Aktar",
+            title="Tüm Verileri Excel'e Aktar",
         )
         if not path:
             return
+
+        kendi_terapist = None if (self.kullanici_yetki == "kurum_muduru" or not self.kullanici_terapist) else self.kullanici_terapist
+
         try:
             conn = self.veritabani_baglan()
-            if self.kullanici_yetki == "kurum_muduru" or not self.kullanici_terapist:
-                df = pd.read_sql_query("SELECT * FROM seans_takvimi ORDER BY id DESC", conn)
-            else:
-                df = pd.read_sql_query(
-                    "SELECT * FROM seans_takvimi WHERE terapist = ? ORDER BY id DESC",
+
+            # --- Seanslar ---
+            sql_seans = """
+                SELECT tarih AS Tarih, saat AS Saat, danisan_adi AS Danışan, terapist AS "Seansı Veren Personel",
+                       durum AS Durum, hizmet_bedeli AS "Seans Ücreti (TL)", alinan_ucret AS "Alınan Ücret (TL)",
+                       kalan_borc AS "Kalan Borç (TL)", odeme_sekli AS "Ödeme Şekli", notlar AS Açıklama
+                FROM seans_takvimi
+                WHERE COALESCE(durum,'') != 'devir_borc'
+            """
+            params = []
+            if kendi_terapist:
+                sql_seans += " AND terapist = ?"
+                params.append(kendi_terapist)
+            sql_seans += " ORDER BY tarih DESC, saat DESC"
+            df_seans = pd.read_sql_query(sql_seans, conn, params=params)
+
+            # --- Kasa Hareketleri (ilgili seans okunabilir şekilde çözülür) ---
+            sql_kasa = """
+                SELECT kh.tarih AS Tarih, kh.tip AS Tip, kh.aciklama AS Açıklama, kh.tutar AS "Tutar (TL)",
+                       kh.odeme_sekli AS "Ödeme Şekli", COALESCE(kh.gider_kategorisi,'') AS Kategori,
+                       CASE WHEN st.id IS NOT NULL THEN st.tarih || ' - ' || COALESCE(st.danisan_adi,'') || ' / ' || COALESCE(st.terapist,'') ELSE '' END AS "İlgili Seans"
+                FROM kasa_hareketleri kh
+                LEFT JOIN seans_takvimi st ON st.id = kh.seans_id
+            """
+            params_kasa = []
+            if kendi_terapist:
+                sql_kasa += " WHERE st.terapist = ?"
+                params_kasa.append(kendi_terapist)
+            sql_kasa += " ORDER BY kh.tarih DESC, kh.id DESC"
+            df_kasa = pd.read_sql_query(sql_kasa, conn, params=params_kasa)
+
+            # --- Personel Ücretleri (ilgili seans/danışan okunabilir şekilde çözülür) ---
+            sql_ucret = """
+                SELECT put.tarih AS Tarih, put.personel_adi AS "Seansı Veren Personel",
+                       COALESCE(st.danisan_adi,'') AS "Seans Verilen Danışan",
+                       put.seans_ucreti AS "Seans Ücreti (TL)", put.personel_ucreti AS "Personel Payı (TL)",
+                       put.odeme_durumu AS "Ödeme Durumu", COALESCE(put.odeme_tarihi,'') AS "Ödeme Tarihi",
+                       COALESCE(put.aciklama,'') AS Açıklama
+                FROM personel_ucret_takibi put
+                LEFT JOIN seans_takvimi st ON st.id = put.seans_id
+            """
+            params_ucret = []
+            if kendi_terapist:
+                sql_ucret += " WHERE put.personel_adi = ?"
+                params_ucret.append(kendi_terapist)
+            sql_ucret += " ORDER BY put.tarih DESC"
+            df_ucret = pd.read_sql_query(sql_ucret, conn, params=params_ucret)
+
+            # --- Danışanlar (sadece kurum müdürü görür) ---
+            df_danisan = None
+            if not kendi_terapist:
+                df_danisan = pd.read_sql_query(
+                    """
+                    SELECT ad_soyad AS "Danışan Adı", veli_adi AS "Veli Adı", telefon AS Telefon,
+                           veli_telefon AS "Veli Telefonu", email AS "E-posta", dogum_tarihi AS "Doğum Tarihi",
+                           adres AS Adres, notlar AS Notlar, balance AS "Bakiye (TL)",
+                           CASE WHEN aktif=1 THEN 'Aktif' ELSE 'Pasif' END AS Durum
+                    FROM danisanlar
+                    ORDER BY ad_soyad
+                    """,
                     conn,
-                    params=(self.kullanici_terapist,),
                 )
+
             conn.close()
-            df.to_excel(path, index=False, engine="openpyxl")
-            messagebox.showinfo("Başarılı", "Excel'e aktarıldı.")
+
+            # --- Özet sayfası ---
+            ozet_satirlar = [
+                ("Toplam Seans Sayısı", len(df_seans)),
+                ("Toplam Seans Ücreti (TL)", float(df_seans["Seans Ücreti (TL)"].sum()) if not df_seans.empty else 0.0),
+                ("Toplam Alınan Ücret (TL)", float(df_seans["Alınan Ücret (TL)"].sum()) if not df_seans.empty else 0.0),
+                ("Toplam Kalan Borç (TL)", float(df_seans["Kalan Borç (TL)"].sum()) if not df_seans.empty else 0.0),
+                ("Toplam Kasa Hareketi Sayısı", len(df_kasa)),
+            ]
+            if df_danisan is not None:
+                ozet_satirlar.append(("Toplam Danışan Sayısı (Aktif+Pasif)", len(df_danisan)))
+            df_ozet = pd.DataFrame(ozet_satirlar, columns=["Kalem", "Değer"])
+
+            with pd.ExcelWriter(path, engine="openpyxl") as writer:
+                df_ozet.to_excel(writer, sheet_name="Özet", index=False)
+                df_seans.to_excel(writer, sheet_name="Seanslar", index=False)
+                df_kasa.to_excel(writer, sheet_name="Kasa Hareketleri", index=False)
+                df_ucret.to_excel(writer, sheet_name="Personel Ücretleri", index=False)
+                if df_danisan is not None:
+                    df_danisan.to_excel(writer, sheet_name="Danışanlar", index=False)
+
+            messagebox.showinfo("Başarılı", f"Tüm veriler Excel'e aktarıldı:\n{path}")
         except Exception as e:
             messagebox.showerror("Hata", f"Excel aktarma hatası:\n{e}")
+            log_exception("excel_aktar", e)
 
     # --- leta_pro MODÜLLERİ: Menü işlemleri ---
     def yedek_klasoru_ac(self):

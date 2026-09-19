@@ -6,6 +6,8 @@ import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from pipeline import DataPipeline
 import sys
+import time
+import zipfile
 import pandas as pd
 import sqlite3
 import unicodedata
@@ -2193,7 +2195,6 @@ class App(ttk.Window):
                     hizmet_bedeli=bedel,
                     alinan_ucret=alinan,
                     notlar=notlar,
-                    oda=oda,
                     check_oda_cakisma=False
                 )
                 
@@ -3025,7 +3026,8 @@ class App(ttk.Window):
         
         values = tree.item(sel[0])["values"]
         cocuk_adi = values[1]
-        
+        personel_adi = values[2]
+
         # Öğrenci ID'sini bul
         try:
             conn = self.veritabani_baglan()
@@ -5957,7 +5959,7 @@ class App(ttk.Window):
             return
         
         try:
-            _ = int(ogrenci_text.split("(ID: ")[1].split(")")[0])
+            ogrenci_id = int(ogrenci_text.split("(ID: ")[1].split(")")[0])
         except Exception:
             return
         
@@ -5993,7 +5995,7 @@ class App(ttk.Window):
             return
         
         try:
-            _ = int(ogrenci_text.split("(ID: ")[1].split(")")[0])
+            ogrenci_id = int(ogrenci_text.split("(ID: ")[1].split(")")[0])
         except Exception:
             messagebox.showerror("Hata", "Geçersiz öğrenci seçimi.")
             return
@@ -6179,7 +6181,7 @@ class App(ttk.Window):
             return
         
         try:
-            _ = int(ogrenci_text.split("(ID: ")[1].split(")")[0])
+            ogrenci_id = int(ogrenci_text.split("(ID: ")[1].split(")")[0])
         except Exception:
             return
         
@@ -6218,7 +6220,7 @@ class App(ttk.Window):
             return
         
         try:
-            _ = int(ogrenci_text.split("(ID: ")[1].split(")")[0])
+            ogrenci_id = int(ogrenci_text.split("(ID: ")[1].split(")")[0])
         except Exception:
             messagebox.showerror("Hata", "Geçersiz öğrenci seçimi.")
             return
@@ -6240,7 +6242,7 @@ class App(ttk.Window):
             return
         
         try:
-            _ = int(ogrenci_text.split("(ID: ")[1].split(")")[0])
+            ogrenci_id = int(ogrenci_text.split("(ID: ")[1].split(")")[0])
         except Exception:
             messagebox.showerror("Hata", "Geçersiz öğrenci seçimi.")
             return
@@ -7692,8 +7694,7 @@ class App(ttk.Window):
             return
         if not messagebox.askyesno(
             "Onay",
-            f"{danisan_adi} danışanını listeden kaldırmak istediğinize emin misiniz?\n\n"
-            "Bu işlem danışanı pasife alır (aktif=0).",
+            f"{name} terapistini silmek istediğinize emin misiniz?",
         ):
             return
         try:
@@ -8596,7 +8597,6 @@ class App(ttk.Window):
                                 hizmet_bedeli=bedel,
                                 alinan_ucret=alinan,
                                 notlar=notlar,
-                                oda=oda,
                                 check_oda_cakisma=False,
                                 skip_pricing_update=True,  # Tarihsel veri; güncel fiyatlar ayrı verilecek
                                 ensure_danisan=False,  # Eski veri importunda danışanlar listesi şişmesin
@@ -10811,8 +10811,7 @@ class App(ttk.Window):
             return
         if not messagebox.askyesno(
             "Onay",
-            f"{danisan_adi} danışanını listeden kaldırmak istediğinize emin misiniz?\n\n"
-            "Bu işlem danışanı pasife alır (aktif=0).",
+            "Bu görevi silmek istediğinize emin misiniz?",
         ):
             return
         try:

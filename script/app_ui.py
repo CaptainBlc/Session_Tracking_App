@@ -3495,7 +3495,9 @@ class App(ttk.Window):
         return {"gunluk": "%Y-%m-%d", "aylik": "%Y-%m", "yillik": "%Y"}.get(donem_tipi, "%Y-%m")
 
     def _donem_listesi_getir(self, donem_tipi: str) -> list:
-        """personel_ucret_takibi tablosunda kaydı bulunan dönemleri (dönem tipine göre) DESC sırayla döndürür."""
+        """seans_takvimi (ana kayıt tablosu) üzerinde kaydı bulunan dönemleri (dönem tipine göre) DESC sırayla döndürür.
+        Personel performansı, ayrı bir hakediş kaydına değil doğrudan ana tabloya dayanır; böylece
+        personel_ucret_takibi'ne (henüz) yansımamış eski/aktarılmış kayıtlar da listelenir."""
         fmt = self._personel_performans_donem_format(donem_tipi)
         try:
             conn = self.veritabani_baglan()
@@ -3503,8 +3505,9 @@ class App(ttk.Window):
             cur.execute(
                 f"""
                 SELECT DISTINCT strftime('{fmt}', tarih) AS donem
-                FROM personel_ucret_takibi
+                FROM seans_takvimi
                 WHERE tarih IS NOT NULL AND tarih != ''
+                  AND COALESCE(durum,'') NOT IN ('iptal', 'devir_borc')
                 ORDER BY donem DESC
                 """
             )
@@ -3548,7 +3551,15 @@ class App(ttk.Window):
         (veya personel_adi boşsa kurum geneli) seans sayısı, brüt ciro,
         personel payı ve net kurum kazancını hesaplar. donem_tipi:
         "gunluk" (%Y-%m-%d), "aylik" (%Y-%m) veya "yillik" (%Y).
-        İptal edilmiş seanslar (seans_takvimi.durum='iptal') hariç tutulur.
+        İptal edilmiş ve eski borç devir kayıtları (durum='iptal'/'devir_borc') hariç tutulur.
+
+        Doğrudan ana tablodan (seans_takvimi) beslenir; personel_ucret_takibi
+        (ayrı hakediş kaydı) tablosuna değil - o kayıt bir sebeple oluşmamış olsa
+        bile (ör. eski bir bug, Excel aktarımı, manuel veri girişi) buradaki
+        rakamlar etkilenmez. Personel payı, o anki hesapla_personel_ucreti()
+        kuralıyla anlık hesaplanır (personel_ucret_takibi'ne yazılan değerle
+        aynı formül).
+
         Dönüş: {"<dönem>": {"seans_sayisi", "brut_ciro", "personel_payi", "net_kazanc"}}
         Hata durumunda boş dict döner.
         """
@@ -3565,46 +3576,32 @@ class App(ttk.Window):
         try:
             conn = self.veritabani_baglan()
             cur = conn.cursor()
-            has_put_seans = self._table_has_column(conn, "personel_ucret_takibi", "seans_id")
 
-            where = []
+            where = ["COALESCE(durum,'') NOT IN ('iptal', 'devir_borc')"]
             params = []
-            if has_put_seans:
-                where.append("(put.seans_id IS NULL OR st.id IS NOT NULL)")
-                where.append("(st.durum IS NULL OR st.durum != 'iptal')")
             if personel_adi:
-                where.append("put.personel_adi = ?")
+                where.append("terapist = ?")
                 params.append(personel_adi)
 
             placeholders = ",".join(["?"] * len(pencere))
-            where.append(f"strftime('{fmt}', put.tarih) IN ({placeholders})")
+            where.append(f"strftime('{fmt}', tarih) IN ({placeholders})")
             params.extend(pencere)
 
             sql = f"""
-                SELECT
-                    strftime('{fmt}', put.tarih) AS donem,
-                    COUNT(*) AS seans_sayisi,
-                    COALESCE(SUM(put.seans_ucreti), 0) AS brut_ciro,
-                    COALESCE(SUM(put.personel_ucreti), 0) AS personel_payi
-                FROM personel_ucret_takibi put
+                SELECT strftime('{fmt}', tarih) AS donem, terapist, COALESCE(hizmet_bedeli, 0)
+                FROM seans_takvimi
+                WHERE {" AND ".join(where)}
             """
-            if has_put_seans:
-                sql += " LEFT JOIN seans_takvimi st ON st.id = put.seans_id"
-            sql += " WHERE " + " AND ".join(where)
-            sql += f" GROUP BY strftime('{fmt}', put.tarih)"
-
             cur.execute(sql, tuple(params))
-            for row in cur.fetchall():
-                donem_key, seans_sayisi, brut_ciro, personel_payi = row
-                if donem_key in sonuc:
-                    brut = float(brut_ciro or 0)
-                    pay = float(personel_payi or 0)
-                    sonuc[donem_key] = {
-                        "seans_sayisi": int(seans_sayisi or 0),
-                        "brut_ciro": brut,
-                        "personel_payi": pay,
-                        "net_kazanc": brut - pay,
-                    }
+            for donem_key, terapist, hizmet_bedeli in cur.fetchall():
+                if donem_key not in sonuc:
+                    continue
+                brut = float(hizmet_bedeli or 0)
+                pay = float(hesapla_personel_ucreti(terapist, brut))
+                sonuc[donem_key]["seans_sayisi"] += 1
+                sonuc[donem_key]["brut_ciro"] += brut
+                sonuc[donem_key]["personel_payi"] += pay
+                sonuc[donem_key]["net_kazanc"] += (brut - pay)
             conn.close()
         except Exception as e:
             log_exception("_personel_performans_hesapla", e)

@@ -7644,9 +7644,6 @@ class App(ttk.Window):
         if not name:
             messagebox.showwarning("Uyarı", "Lütfen terapist adını giriniz!")
             return
-        if "name hoca" in name.lower():
-            messagebox.showwarning("Uyarı", "Name Hoca kurumdan ayrıldı. Eklenemez.")
-            return
         rol = (self.cmb_rol.get() or "").strip()
         try:
             conn = self.veritabani_baglan()
